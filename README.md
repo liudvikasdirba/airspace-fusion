@@ -309,6 +309,19 @@ Manual dashboard checklist, per release (everything else is covered by `tests/te
 - tooltips show units
 - the server listens on 127.0.0.1 only: `netstat -an | findstr 8501` on Windows, `ss -ltn | grep 8501` on Linux
 
+## Documentation, changelog and versions
+
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version, with upcoming changes under Unreleased.
+- [docs/](docs/README.md): an index of the project documents, including the
+  [versioning policy](docs/versioning.md), the [release process](docs/releasing.md) and the architecture
+  decision records in [docs/adr/](docs/adr/).
+- The version is defined in `src/airspace_fusion/__init__.py`. Print it with `airspace-fusion --version`, and
+  check that `CITATION.cff` and the changelog agree with it:
+
+```bash
+.venv/Scripts/python ci/release.py --check
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

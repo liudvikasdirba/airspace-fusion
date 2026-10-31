@@ -26,12 +26,17 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from airspace_fusion import __version__
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict
+
+# Version of the rule book's JSON layout. Increase it on any incompatible change, so that an
+# old file fails to load with a clear error instead of being misread.
+RULE_BOOK_FORMAT = 1
 
 TARGET_CONTAINMENT = 0.95
 # Score penalty per unit of |containment - 0.95|: one percentage point costs as much as 5 % RMSE.
@@ -192,7 +197,9 @@ class RuleBook(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    version: int = Field(default=0, ge=0)
+    format_version: Literal[1] = RULE_BOOK_FORMAT
+    version: int = Field(default=0, ge=0)  # increases with every learning update that changes a rule
+    package_version: str = __version__  # airspace-fusion release that last wrote this rule book
     trackers: dict[str, TrackerConfig] = Field(default_factory=dict)
     fusion_disabled: tuple[str, ...] = ()
     lessons: tuple[Lesson, ...] = ()
@@ -233,6 +240,7 @@ class RuleBook(BaseModel):
         return RuleBook.model_validate(
             dict(
                 version=self.version + int(changed),
+                package_version=__version__,
                 trackers=trackers,
                 fusion_disabled=tuple(disabled),
                 lessons=(*self.lessons, *lessons),

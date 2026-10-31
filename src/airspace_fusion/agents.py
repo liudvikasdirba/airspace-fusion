@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from airspace_fusion import __version__
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
 from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict, compare_modes
 from airspace_fusion.learning import (
@@ -264,8 +265,9 @@ class Orchestrator:
         report: list[str] = []
         failures: list[Gap] = []
         rounds_run = 0
-        self.log.record("task", scenarios=[s.name for s in task.scenarios], train_seeds=task.train_seeds,
-                        holdout_seeds=task.holdout_seeds, rounds=rounds, rules_version=self.rules.version)
+        self.log.record("task", package_version=__version__, scenarios=[s.name for s in task.scenarios],
+                        train_seeds=task.train_seeds, holdout_seeds=task.holdout_seeds, rounds=rounds,
+                        rules_version=self.rules.version)
         for round_index in range(rounds):
             rounds_run += 1
             report.append(f"-- round {round_index + 1} (rule book v{self.rules.version})")

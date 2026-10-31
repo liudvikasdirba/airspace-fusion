@@ -6,6 +6,7 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
+from airspace_fusion import __version__
 from airspace_fusion.agents import LearningTask, Orchestrator, describe_tracker
 from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import METRIC_NAMES, Mode, compare_modes, run_single
@@ -81,6 +82,7 @@ def _learn(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="airspace-fusion", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_p = sub.add_parser("run", help="single seeded simulation, both modes")

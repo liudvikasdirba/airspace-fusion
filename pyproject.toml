@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "airspace-fusion"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Simulation-only single-object multi-sensor tracking demonstrator (educational prototype)."
 readme = "README.md"
 license = "MIT"
@@ -26,6 +26,9 @@ dev = ["pytest>=8", "hypothesis>=6.100"]
 
 [project.scripts]
 airspace-fusion = "airspace_fusion.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "airspace_fusion.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

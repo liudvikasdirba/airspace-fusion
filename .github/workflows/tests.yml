@@ -18,6 +18,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install ruff==0.17.3  # pinned: new ruff releases add rules
       - run: python -m ruff check .
+      - run: python ci/release.py --check  # __init__.py, CITATION.cff and CHANGELOG.md agree
 
   coverage:
     name: coverage / ubuntu / py3.12
