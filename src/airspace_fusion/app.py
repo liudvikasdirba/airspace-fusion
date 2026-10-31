@@ -151,7 +151,7 @@ def error_figure(run: SingleRun, modes: list[Mode]) -> go.Figure:
                                  hovertemplate="t=%{x:.0f} s  error %{y:.1f} m<extra>" + mode.value + "</extra>"))
         fig.add_trace(go.Scatter(x=t, y=bound, mode="lines", line=dict(color=color, width=1, dash="dot"),
                                  name=f"{mode.value}: filter's 95% radius (major axis)",
-                                 hovertemplate="t=%{x:.0f} s  95%% radius %{y:.1f} m<extra>" + mode.value + "</extra>"))
+                                 hovertemplate="t=%{x:.0f} s 95% radius %{y:.1f} m<extra>" + mode.value + "</extra>"))
     fig.update_xaxes(title="time (s)")
     fig.update_yaxes(title="metres", rangemode="tozero")
     fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
@@ -167,9 +167,10 @@ METRIC_LABELS = {
     "position_rmse_m": "Position RMSE (m)",
     "coverage": "Coverage (fraction of scans with a track)",
     "containment_95": "Truth inside 95% ellipse (fraction; ~0.95 = honest)",
-    "missed_updates": "Missed updates (prediction-only scans)",
+    "missed_updates": "Missed primary-sensor updates (scans with a track)",
+    "prediction_only_scans": "Prediction-only scans (no sensor updated)",
     "rejected_observations": "Rejected observations (tracker)",
-    "invalid_observations": "Invalid records (schema)",
+    "invalid_observations": "Invalid records from this mode's sensors (schema)",
     "track_initiations": "Track initiations",
     "processing_time_s": "Processing time (s)",
 }

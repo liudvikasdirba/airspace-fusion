@@ -42,14 +42,17 @@ class RunMetrics:
     position_rmse_m: float  # NaN if no estimates exist
     coverage: float  # fraction of scan times with a track estimate
     containment_95: float  # fraction of estimates whose 95 % ellipse contains the truth
-    missed_updates: int
+    missed_updates: int  # scans with a track but no accepted primary-sensor update (comparable across modes)
+    prediction_only_scans: int  # scans with a track but no accepted update from any sensor
     rejected_observations: int  # rejected by the tracker (gate, unsupported, geometry, duplicate)
-    invalid_observations: int  # rejected by schema validation before tracking
+    invalid_observations: int  # records from this mode's sensors rejected by schema validation
     track_initiations: int
     processing_time_s: float
 
 
-def evaluate_run(result: TrackerResult, truth: GroundTruth, invalid_count: int) -> RunMetrics:
+def evaluate_run(
+    result: TrackerResult, truth: GroundTruth, invalid_count: int, primary_sensor_id: str
+) -> RunMetrics:
     truth_index = {t: i for i, t in enumerate(truth.timestamps)}
     sq_errors: list[float] = []
     contained = 0
@@ -68,7 +71,8 @@ def evaluate_run(result: TrackerResult, truth: GroundTruth, invalid_count: int) 
         position_rmse_m=math.sqrt(sum(sq_errors) / n_est) if n_est else math.nan,
         coverage=n_est / n_total if n_total else math.nan,
         containment_95=contained / n_est if n_est else math.nan,
-        missed_updates=result.missed_updates,
+        missed_updates=result.missed_updates_for(primary_sensor_id),
+        prediction_only_scans=result.prediction_only_scans,
         rejected_observations=result.rejected_count,
         invalid_observations=invalid_count,
         track_initiations=result.track_initiations,
@@ -96,8 +100,12 @@ def run_single(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> S
     measurements, invalid = parse_records(sim.records)
     modes: dict[Mode, ModeRun] = {}
     for mode in Mode:
-        result = run_tracker(measurements, sim.report_times, tracker, sensor_ids=sensors_for_mode(scenario, mode))
-        modes[mode] = ModeRun(result, evaluate_run(result, sim.truth, len(invalid)))
+        sensors = sensors_for_mode(scenario, mode)
+        result = run_tracker(measurements, sim.report_times, tracker, sensor_ids=sensors)
+        # Records with an unreadable sensor_id cannot be attributed, so they count against every mode.
+        n_invalid = sum(1 for r in invalid if r.sensor_id is None or r.sensor_id in sensors)
+        metrics = evaluate_run(result, sim.truth, n_invalid, scenario.primary.sensor_id)
+        modes[mode] = ModeRun(result, metrics)
     return SingleRun(sim, measurements, invalid, modes)
 
 
@@ -146,9 +154,14 @@ def paired_verdict(baseline: Sequence[float], fusion: Sequence[float]) -> tuple[
     rel = mean_d / float(b.mean())
     if np.allclose(d, 0.0):
         return mean_d, (mean_d, mean_d), rel, 1.0, Verdict.NO_MATERIAL_CHANGE
-    sem = float(d.std(ddof=1)) / math.sqrt(d.size)
-    half = float(stats.t.ppf(0.975, d.size - 1)) * sem
-    p_value = float(stats.ttest_rel(f, b).pvalue)
+    if np.allclose(d, d[0]):
+        # Identical non-zero change on every seed: no variance, so the t-test is undefined
+        # (it would return NaN), but the change is certain rather than insignificant.
+        half, p_value = 0.0, 0.0
+    else:
+        sem = float(d.std(ddof=1)) / math.sqrt(d.size)
+        half = float(stats.t.ppf(0.975, d.size - 1)) * sem
+        p_value = float(stats.ttest_rel(f, b).pvalue)
     if p_value < SIGNIFICANCE_LEVEL and abs(rel) >= MATERIAL_RELATIVE_CHANGE:
         verdict = Verdict.IMPROVES if mean_d < 0 else Verdict.WORSENS
     else:
@@ -161,6 +174,7 @@ METRIC_NAMES = (
     "coverage",
     "containment_95",
     "missed_updates",
+    "prediction_only_scans",
     "rejected_observations",
     "invalid_observations",
     "track_initiations",

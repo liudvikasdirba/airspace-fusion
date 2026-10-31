@@ -70,7 +70,7 @@ def test_empty_observations():
     result = run_tracker([], grid(10), CFG)
     assert len(result.estimates) == 10
     assert not any(e.has_track for e in result.estimates)
-    assert result.missed_updates == 0 and result.rejected_count == 0
+    assert result.prediction_only_scans == 0 and result.rejected_count == 0
     assert run_tracker([], [], CFG).estimates == []
 
 
@@ -86,7 +86,8 @@ def test_tracks_straight_line():
 def test_missing_observations_coast_and_inflate_uncertainty():
     result = run_tracker(straight_line(30, skip={10, 11, 12, 13}), grid(30), CFG)
     assert all(e.has_track for e in result.estimates[1:])
-    assert result.missed_updates == 4
+    assert result.prediction_only_scans == 4
+    assert result.missed_updates_for("P") == 4
     variances = [np.trace(e.position_covariance) for e in result.estimates[9:14]]
     assert all(b > a for a, b in zip(variances, variances[1:]))
     # Coasting follows the constant-velocity prediction.
@@ -150,10 +151,34 @@ def test_unsupported_types_rejected_explicitly():
     assert result.rejected_count == 2
 
 
-def test_duplicate_ids_rejected():
+def test_duplicate_ids_rejected_and_counted():
     ms = straight_line(5)
-    result = run_tracker(ms + [ms[3]], grid(5), CFG)
-    assert result.disposition_counts[Disposition.DUPLICATE_ID] == 1
+    result = run_tracker(ms + [ms[3], ms[3], ms[1]], grid(5), CFG)
+    assert result.duplicate_count == 3
+    assert result.rejected_count == 3
+    assert set(result.dispositions) == {m.measurement_id for m in ms}
+
+
+def test_bearing_only_scan_does_not_reset_initiation():
+    # Primary misses scan 1; a bearing arrives then. Initiation from scans 0 and 2 must still happen,
+    # exactly as it would without the bearing sensor.
+    ms = straight_line(6, skip={1})
+    bearing = brg(1, (0.0, -2000.0), (110.0, 55.0))
+    without = run_tracker(ms, grid(6), CFG)
+    with_bearing = run_tracker(ms + [bearing], grid(6), CFG)
+    assert without.estimates[2].has_track
+    assert [e.has_track for e in with_bearing.estimates] == [e.has_track for e in without.estimates]
+
+
+def test_sensor_with_mixed_types_gated_per_type():
+    ms = straight_line(20)
+    truth_10 = (200.0, 100.0)
+    bearing = brg(10, (0.0, -2000.0), truth_10).model_copy(update={"sensor_id": "P", "measurement_id": "mixed_b"})
+    result = run_tracker(ms + [bearing], grid(20), CFG)
+    # Both the position and the bearing from sensor "P" at t=10 are used; neither displaces the other.
+    assert result.dispositions["mixed_b"] == Disposition.ACCEPTED
+    assert len(result.estimates[10].updated_by) == 2
+    assert result.estimates[10].updated_sensors == {"P"}
 
 
 def test_far_false_observation_gated_out():
@@ -177,7 +202,7 @@ def test_bearing_update_reduces_cross_range_uncertainty_only():
     # Bearing sensor at origin looks along +x: bearing constrains y (cross-range), not x (range).
     m = brg(0, (0.0, 0.0), (1000.0, 0.0), std=0.001)
     post, used = tracker._update_with_sensor(prior, [m], at(0), {})
-    assert used == [m.measurement_id]
+    assert used == [m]
     p = np.asarray(post.covar)
     assert p[2, 2] < 10.0  # y variance strongly reduced (1 mrad at 1 km = 1 m)
     assert p[0, 0] == pytest.approx(100.0, rel=1e-6)  # x variance unchanged

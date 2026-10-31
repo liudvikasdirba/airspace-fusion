@@ -62,8 +62,10 @@ sensor `S2-BRG`. Both use one simulation per seed, so truth and primary measurem
 
 **Metrics.** Position RMSE (only at scans with a track), coverage (fraction of scans with a track), 95 %
 containment (fraction of estimates whose 95 % ellipse contains truth; ≈0.95 means the stated uncertainty is
-honest), missed updates (scans with a track but no accepted measurement), rejected observations (gate,
-unsupported type, degenerate geometry, duplicate id), invalid records (schema), track initiations, processing time.
+honest), missed updates (scans with a track but no accepted primary-sensor measurement - comparable across
+modes), prediction-only scans (no sensor updated the track), rejected observations (gate, unsupported type,
+degenerate geometry, duplicate id), invalid records from the mode's own sensors (schema), track initiations,
+processing time.
 
 **Verdict.** Per-seed RMSEs are paired; fusion "improves" or "worsens" only if a paired t-test gives p < 0.05
 **and** the mean relative change is at least 5 %. Otherwise "no material change".
@@ -72,12 +74,14 @@ unsupported type, degenerate geometry, duplicate id), invalid records (schema), 
 
 | Scenario | Baseline RMSE (m) | Fusion RMSE (m) | Change [95 % CI] | Fusion 95 % containment | Verdict |
 |---|---|---|---|---|---|
-| reference | 18.83 ± 1.7 | 16.66 ± 1.7 | −2.17 m [−2.55, −1.80], −11.5 % | 0.92 | improves |
-| noisy_primary | 49.67 ± 5.3 | 37.68 ± 5.7 | −11.99 m [−13.44, −10.53], −24.1 % | 0.91 | improves |
-| distant_bearing | 18.83 ± 1.7 | 18.79 ± 1.8 | −0.04 m [−0.18, +0.11], −0.2 % | 0.92 | no material change |
-| biased_bearing | 18.83 ± 1.7 | 37.72 ± 5.3 | +18.89 m [+16.44, +21.34], +100.3 % | 0.28 | worsens |
+| reference | 18.83 ± 1.7 | 16.70 ± 1.6 | −2.13 m [−2.51, −1.76], −11.3 % | 0.92 | improves |
+| noisy_primary | 49.67 ± 5.3 | 37.84 ± 5.7 | −11.83 m [−13.54, −10.12], −23.8 % | 0.91 | improves |
+| distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
+| biased_bearing | 18.83 ± 1.7 | 37.50 ± 5.0 | +18.66 m [+16.39, +20.94], +99.1 % | 0.28 | worsens |
 
-Coverage was 0.95–0.99 in all cases and nearly identical between modes. Run the command to reproduce.
+Coverage is identical between modes (0.96–0.99). In `biased_bearing` fusion also misses more primary updates
+(25.0 vs 19.5 per run): the bias drags the estimate far enough that correct position measurements fail the gate.
+Run the command to reproduce.
 
 ## Limitations
 

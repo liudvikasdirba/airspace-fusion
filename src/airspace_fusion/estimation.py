@@ -30,7 +30,7 @@ from __future__ import annotations
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -63,10 +63,9 @@ class Disposition:
     NOT_SELECTED = "rejected_not_nearest_in_gate"
     UNSUPPORTED_TYPE = "rejected_unsupported_type"
     DEGENERATE_GEOMETRY = "rejected_degenerate_geometry"
-    DUPLICATE_ID = "rejected_duplicate_id"
     NO_TRACK = "unused_no_track"
 
-    REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY, DUPLICATE_ID)
+    REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY)
 
 
 @dataclass(frozen=True)
@@ -75,6 +74,7 @@ class Estimate:
     state: np.ndarray | None  # [x, vx, y, vy], or None when no track exists
     covariance: np.ndarray | None  # 4x4
     updated_by: tuple[str, ...]  # measurement ids accepted at this timestamp
+    updated_sensors: frozenset[str] = frozenset()  # sensors that contributed those measurements
 
     @property
     def has_track(self) -> bool:
@@ -97,19 +97,25 @@ class TrackerResult:
     dispositions: dict[str, str]  # measurement_id -> Disposition
     track_initiations: int
     processing_time_s: float
-    disposition_counts: Counter[str] = field(init=False)
+    duplicate_count: int = 0  # records whose measurement_id was already seen; not processed
 
-    def __post_init__(self) -> None:
-        self.disposition_counts = Counter(self.dispositions.values())
+    @property
+    def disposition_counts(self) -> Counter[str]:
+        return Counter(self.dispositions.values())
 
     @property
     def rejected_count(self) -> int:
-        return sum(self.disposition_counts[r] for r in Disposition.REJECTED)
+        counts = self.disposition_counts
+        return sum(counts[r] for r in Disposition.REJECTED) + self.duplicate_count
 
     @property
-    def missed_updates(self) -> int:
-        """Report times at which a track existed but no measurement was accepted (prediction only)."""
+    def prediction_only_scans(self) -> int:
+        """Report times at which a track existed but no measurement from any sensor was accepted."""
         return sum(1 for e in self.estimates if e.has_track and not e.updated_by)
+
+    def missed_updates_for(self, sensor_id: str) -> int:
+        """Report times at which a track existed but ``sensor_id`` contributed no accepted measurement."""
+        return sum(1 for e in self.estimates if e.has_track and sensor_id not in e.updated_sensors)
 
 
 class SingleTargetTracker:
@@ -122,6 +128,8 @@ class SingleTargetTracker:
             measurement_model=None, use_joseph_cov=True, force_symmetric_covariance=True
         )
         self.max_coast = timedelta(seconds=config.max_coast_s)
+        # Chi-square gate thresholds by measurement dimension (1 = bearing, 2 = position).
+        self.gate_thresholds = {dof: float(chi2.ppf(config.gate_probability, dof)) for dof in (1, 2)}
 
     # -- measurement models -------------------------------------------------
 
@@ -143,9 +151,6 @@ class SingleTargetTracker:
         else:  # guarded by the caller; never reinterpret another type
             raise ValueError(f"unsupported measurement type {m.measurement_type}")
         return Detection(vector, timestamp=m.timestamp_utc, measurement_model=model)
-
-    def _gate_threshold(self, dof: int) -> float:
-        return float(chi2.ppf(self.config.gate_probability, dof))
 
     def _nis(self, prior: GaussianState, m: Measurement) -> tuple[float, SingleHypothesis]:
         detection = self._detection(m)
@@ -222,10 +227,11 @@ class SingleTargetTracker:
         report_set = set(report_times)
 
         dispositions: dict[str, str] = {}
+        duplicates = 0
         by_time: dict[datetime, list[Measurement]] = defaultdict(list)
         for m in measurements:
             if m.measurement_id in dispositions:
-                dispositions[m.measurement_id + "#dup"] = Disposition.DUPLICATE_ID
+                duplicates += 1
                 continue
             if m.measurement_type not in SUPPORTED_TYPES:
                 dispositions[m.measurement_id] = Disposition.UNSUPPORTED_TYPE
@@ -244,32 +250,34 @@ class SingleTargetTracker:
                 by_time.get(t, []),
                 key=lambda m: (SUPPORTED_TYPES.index(m.measurement_type), m.sensor_id, m.measurement_id),
             )
-            accepted: list[str] = []
+            positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
+            accepted: list[Measurement] = []
 
             if track is not None and last_update is not None and t - last_update > self.max_coast:
                 track = None
 
             if track is not None:
                 state = track
-                for _, group in _group_by_sensor(scan):
+                for group in _group_by_sensor_and_type(scan):
                     state, used = self._update_with_sensor(state, group, t, dispositions)
                     accepted.extend(used)
                 track = state if state.timestamp == t else self.predictor.predict(state, timestamp=t)
                 if accepted:
                     last_update = t
             else:
-                positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
                 started_track = self._initiate(previous_positions, positions)
                 if started_track is not None:
                     track, a, b = started_track
                     dispositions[a.measurement_id] = Disposition.INITIATION
                     dispositions[b.measurement_id] = Disposition.INITIATION
-                    accepted.append(b.measurement_id)
+                    accepted.append(b)
                     last_update = t
                     initiations += 1
 
-            if scan:
-                previous_positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
+            # Only scans that contain positions replace the initiation history, so other
+            # sensors' observations cannot change how (or when) a track is started.
+            if positions:
+                previous_positions = positions
 
             if t in report_set:
                 estimates.append(
@@ -277,7 +285,8 @@ class SingleTargetTracker:
                         timestamp=t,
                         state=None if track is None else np.asarray(track.state_vector, dtype=float).ravel(),
                         covariance=None if track is None else np.asarray(track.covar, dtype=float),
-                        updated_by=tuple(accepted),
+                        updated_by=tuple(m.measurement_id for m in accepted),
+                        updated_sensors=frozenset(m.sensor_id for m in accepted),
                     )
                 )
 
@@ -286,13 +295,15 @@ class SingleTargetTracker:
             dispositions=dispositions,
             track_initiations=initiations,
             processing_time_s=time.perf_counter() - started,
+            duplicate_count=duplicates,
         )
 
     def _update_with_sensor(
         self, state: GaussianState, group: list[Measurement], t: datetime, dispositions: dict[str, str]
-    ) -> tuple[GaussianState, list[str]]:
+    ) -> tuple[GaussianState, list[Measurement]]:
+        """Gate one sensor's measurements of one type and apply the nearest in-gate one."""
         prior = self.predictor.predict(state, timestamp=t)
-        threshold = self._gate_threshold(len(group[0].measurement_value))
+        threshold = self.gate_thresholds[len(group[0].measurement_value)]
         candidates: list[tuple[float, Measurement, SingleHypothesis]] = []
         for m in group:
             if m.measurement_type is MeasurementType.BEARING_ONLY and not self._bearing_geometry_ok(prior, m):
@@ -312,14 +323,15 @@ class SingleTargetTracker:
         posterior = self.updater.update(hypothesis)
         self._check_state(posterior)
         dispositions[chosen.measurement_id] = Disposition.ACCEPTED
-        return posterior, [chosen.measurement_id]
+        return posterior, [chosen]
 
 
-def _group_by_sensor(scan: list[Measurement]) -> list[tuple[str, list[Measurement]]]:
-    groups: dict[str, list[Measurement]] = {}
-    for m in scan:  # scan is already ordered: position sensors first, then bearing sensors
-        groups.setdefault(m.sensor_id, []).append(m)
-    return list(groups.items())
+def _group_by_sensor_and_type(scan: list[Measurement]) -> list[list[Measurement]]:
+    """One group per (sensor, measurement type), so gating never mixes measurement dimensions."""
+    groups: dict[tuple[str, MeasurementType], list[Measurement]] = {}
+    for m in scan:  # scan is already ordered: positions first, then bearings
+        groups.setdefault((m.sensor_id, m.measurement_type), []).append(m)
+    return list(groups.values())
 
 
 def _validate_report_times(report_times: Sequence[datetime]) -> None:

@@ -202,6 +202,7 @@ class RejectedRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     measurement_id: str | None
+    sensor_id: str | None
     errors: tuple[str, ...]
 
 
@@ -215,5 +216,12 @@ def parse_records(records: list[dict[str, Any]]) -> tuple[list[Measurement], lis
         except ValidationError as exc:
             errors = tuple(f"{'.'.join(str(p) for p in e['loc']) or '<record>'}: {e['msg']}" for e in exc.errors())
             mid = record.get("measurement_id") if isinstance(record, dict) else None
-            rejected.append(RejectedRecord(measurement_id=mid if isinstance(mid, str) else None, errors=errors))
+            sid = record.get("sensor_id") if isinstance(record, dict) else None
+            rejected.append(
+                RejectedRecord(
+                    measurement_id=mid if isinstance(mid, str) else None,
+                    sensor_id=sid if isinstance(sid, str) else None,
+                    errors=errors,
+                )
+            )
     return valid, rejected

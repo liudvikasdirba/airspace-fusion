@@ -175,5 +175,6 @@ def test_parse_records_reports_errors():
     valid, rejected = parse_records(records)
     assert [m.measurement_id for m in valid] == ["m1"]
     assert [r.measurement_id for r in rejected] == ["b1", "x"]
+    assert [r.sensor_id for r in rejected] == ["S2", None]
     assert all(r.errors for r in rejected)
     assert parse_records([]) == ([], [])

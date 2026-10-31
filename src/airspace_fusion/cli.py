@@ -8,6 +8,13 @@ from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import METRIC_NAMES, Mode, compare_modes, run_single
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def _run(args: argparse.Namespace) -> None:
     scenario = SCENARIOS[args.scenario]
     run = run_single(scenario, TrackerConfig(), args.seed)
@@ -47,7 +54,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cmp_p = sub.add_parser("compare", help="multi-seed baseline vs fusion comparison")
     cmp_p.add_argument("--scenario", choices=[*SCENARIOS, "all"], default="all")
-    cmp_p.add_argument("--seeds", type=int, default=20)
+    cmp_p.add_argument("--seeds", type=_positive_int, default=20)
     cmp_p.add_argument("--first-seed", type=int, default=0)
     cmp_p.set_defaults(func=_compare)
 
