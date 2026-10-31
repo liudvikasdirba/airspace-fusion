@@ -142,7 +142,9 @@ class ComparisonSummary:
     verdict: Verdict
 
 
-def paired_verdict(baseline: Sequence[float], fusion: Sequence[float]) -> tuple[float, tuple[float, float], float, float, Verdict]:
+def paired_verdict(
+    baseline: Sequence[float], fusion: Sequence[float]
+) -> tuple[float, tuple[float, float], float, float, Verdict]:
     """Paired comparison of per-seed RMSE. Lower is better. Seeds where either value is NaN are dropped."""
     pairs = [(b, f) for b, f in zip(baseline, fusion) if not (math.isnan(b) or math.isnan(f))]
     if len(pairs) < 2:

@@ -27,11 +27,15 @@ ELLIPSE_EVERY_N = 10
 LIMITATIONS = """
 **This is a synthetic, educational simulation - not an operational system.**
 
-- One synthetic object, two stationary synthetic sensors, generic 2D frame in metres. No real hardware, terrain or propagation.
+- One synthetic object, two stationary synthetic sensors, generic 2D frame in metres. No real hardware, terrain or
+  propagation.
 - Nearly-constant-velocity Kalman filter; the turn is model mismatch absorbed by process noise.
-- Bearing updates use an extended Kalman update (linearised `atan2`). Poor geometry (target near the bearing sensor or far away) gives little or unreliable information; very close geometry is explicitly rejected.
-- The filter assumes zero-mean, independent, white errors. A biased or correlated sensor makes fusion over-confident and can make it **worse** than the baseline (see the `biased_bearing` scenario).
-- Association is gating + nearest-neighbour for a single object. False observations inside the gate can still be accepted. No multi-object association.
+- Bearing updates use an extended Kalman update (linearised `atan2`). Poor geometry (target near the bearing sensor
+  or far away) gives little or unreliable information; very close geometry is explicitly rejected.
+- The filter assumes zero-mean, independent, white errors. A biased or correlated sensor makes fusion over-confident
+  and can make it **worse** than the baseline (see the `biased_bearing` scenario).
+- Association is gating + nearest-neighbour for a single object. False observations inside the gate can still be
+  accepted. No multi-object association.
 - RMSE is computed only where a track exists; compare it together with coverage.
 - "False observation" markers use truth-side labels for display only; the tracker never sees them.
 """
@@ -51,7 +55,8 @@ def trajectory_figure(run: SingleRun, modes: list[Mode], show_bearings: bool) ->
     fig = go.Figure()
 
     if show_bearings:
-        ray_len = 1.3 * float(np.max(np.linalg.norm(truth.positions_m - np.array(scenario.secondary.position_m), axis=1)))
+        offsets = truth.positions_m - np.array(scenario.secondary.position_m)
+        ray_len = 1.3 * float(np.max(np.linalg.norm(offsets, axis=1)))
         xs: list[float | None] = []
         ys: list[float | None] = []
         sx, sy = scenario.secondary.position_m
@@ -204,7 +209,8 @@ def main() -> None:
     sim_scn = run.simulation.scenario
     st.markdown(
         f"**Showing:** scenario `{sim_scn.name}`, seed {run.simulation.seed}, "
-        f"position noise {sim_scn.primary.noise_std:.0f} m, bearing noise {math.degrees(sim_scn.secondary.noise_std):.2f} deg, "
+        f"position noise {sim_scn.primary.noise_std:.0f} m, "
+        f"bearing noise {math.degrees(sim_scn.secondary.noise_std):.2f} deg, "
         f"miss probability {1 - sim_scn.primary.detection_probability:.2f}. Both modes use the same truth and records."
     )
 

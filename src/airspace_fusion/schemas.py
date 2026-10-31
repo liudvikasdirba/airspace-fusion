@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -100,7 +100,7 @@ class AngularUncertainty(BaseModel):
         return value
 
 
-Uncertainty = Annotated[Union[CovarianceUncertainty, AngularUncertainty], Field(discriminator="kind")]
+Uncertainty = Annotated[CovarianceUncertainty | AngularUncertainty, Field(discriminator="kind")]
 
 
 class Measurement(BaseModel):

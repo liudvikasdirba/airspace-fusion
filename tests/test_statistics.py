@@ -11,12 +11,12 @@ import math
 
 import numpy as np
 import pytest
+from helpers import matched_scenario, matched_tracker
 from scipy import stats
 
 from airspace_fusion.config import SCENARIOS, TrackerConfig, default_primary, default_secondary
 from airspace_fusion.estimation import Disposition
 from airspace_fusion.evaluation import Mode, Verdict, compare_modes, run_single
-from helpers import matched_scenario, matched_tracker
 
 pytestmark = pytest.mark.slow
 

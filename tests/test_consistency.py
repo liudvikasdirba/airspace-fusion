@@ -19,12 +19,12 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
+from helpers import ACCEL_STD_MPS2, matched_scenario, matched_tracker
 from scipy import stats
 
 from airspace_fusion.config import ScenarioConfig, TrackerConfig, default_secondary
 from airspace_fusion.evaluation import CHI2_2DOF_95, Mode, run_single
 from airspace_fusion.schemas import MeasurementType
-from helpers import ACCEL_STD_MPS2, matched_scenario, matched_tracker
 
 pytestmark = pytest.mark.slow
 

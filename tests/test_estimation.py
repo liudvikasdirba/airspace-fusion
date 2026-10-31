@@ -7,14 +7,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from stonesoup.types.array import StateVector
+from stonesoup.types.state import GaussianState
 
 import airspace_fusion.estimation as estimation
 from airspace_fusion.config import SCENARIOS, TrackerConfig
 from airspace_fusion.estimation import Disposition, SingleTargetTracker, run_tracker
 from airspace_fusion.schemas import Measurement, parse_records
 from airspace_fusion.simulator import simulate
-from stonesoup.types.array import StateVector
-from stonesoup.types.state import GaussianState
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 CFG = TrackerConfig()

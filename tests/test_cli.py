@@ -51,7 +51,7 @@ def test_run_every_scenario(scenario, capsys):
     assert out.startswith(f"scenario={scenario} seed=3 ")
     rows = metric_rows(out)
     assert set(rows) == set(METRIC_NAMES)
-    for name, (line,) in rows.items():
+    for (line,) in rows.values():
         values = line.split()[1:]
         assert len(values) == 2, line  # baseline, fusion
         for v in values:

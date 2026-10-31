@@ -39,3 +39,12 @@ filterwarnings = ["error::DeprecationWarning:airspace_fusion", "error::RuntimeWa
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+
+[tool.ruff.lint]
+# Explicit so results do not shift with ruff's default rule set. B905 (zip strict=) is left off on purpose.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["B905"]
+
+[tool.coverage.run]
+source = ["airspace_fusion"]
+branch = true

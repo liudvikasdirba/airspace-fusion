@@ -7,3 +7,5 @@ data/
 build/
 dist/
 constraints-min.txt
+.coverage
+coverage.xml
