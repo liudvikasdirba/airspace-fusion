@@ -1,12 +1,17 @@
 # airspace-fusion
 
-A local, **simulation-only** single-object tracking demonstrator. It asks one question with synthetic data:
-does adding a supplementary direction-measuring (bearing-only) sensor to a position-measuring sensor improve
-tracking, make it worse, or make no measurable difference?
+A local, **simulation-only** single-object tracking demonstrator. It answers one question with synthetic data:
+does adding a supplementary direction-measuring (bearing-only) sensor to a position-measuring sensor make
+tracking better, worse, or no different?
 
-This is an educational research prototype. It connects to no real sensors, feeds, maps or other systems.
+Each experiment runs the same simulated data twice: **baseline** (position sensor only) and **fusion** (position +
+bearing sensor). The results are scored against the simulated ground truth. Fusion is not assumed to win, and in
+one of the four built-in scenarios it makes tracking clearly worse.
 
-## Install
+This is an educational research prototype. It connects to no real sensors, feeds, maps or other systems, and
+models no real hardware.
+
+## Quick start
 
 Requires Python 3.10+ (3.12+ recommended; tested on 3.10.7 and 3.12.10). From the repository root:
 
@@ -18,103 +23,144 @@ python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"
 ```
 
-(On macOS/Linux use `.venv/bin/python`.) `requirements.txt` is an optional pinned lock of a known-good environment.
+On macOS/Linux use `.venv/bin/python` in place of `.venv/Scripts/python` throughout.
 
-## Run
-
-Tests (fast suite, about 25 s):
+Open the dashboard at http://localhost:8501:
 
 ```bash
-.venv/Scripts/python -m pytest
+.venv/Scripts/python -m streamlit run src/airspace_fusion/app.py --server.address localhost
 ```
 
-Slow suite - Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep,
-headless dashboard tests, performance budgets and a cross-process reproducibility check (about 3 min):
+`--server.address localhost` keeps the dashboard reachable only from this machine. `.streamlit/config.toml` sets the
+same option, but Streamlit reads it only when started from the repository root.
 
-```bash
-.venv/Scripts/python -m pytest -m slow
-```
+## Using the dashboard
 
-The fast suite includes property-based schema fuzzing (`hypothesis`), checks of the tracker against
-textbook Kalman/EKF formulas in plain NumPy, end-to-end edge cases, module dependency rules and CLI tests.
+**Sidebar controls**
 
-`tests/test_regression.py` compares per-seed metrics and a simulator-output checksum against
-`tests/golden/regression.json`. If a change to results is intended, regenerate it and review the JSON diff:
+| Control | Effect |
+|---|---|
+| Scenario | One of the four built-in worlds (see [Scenarios](#scenarios)); its description is shown underneath. |
+| Random seed | Which random version of that world is generated. The same seed always gives the same result. |
+| Noise multiplier | Scales both sensors' measurement noise (0.25x to 3x). |
+| Missed-observation probability | Chance that each sensor misses the object on a scan (0 to 0.8). |
+| Show | Both modes, baseline only, or fusion only. |
+| Show bearing rays | Draws each bearing observation as a faint line from the bearing sensor. |
+| **Run simulation** | Runs with the current settings. Changing controls has no effect until you click it; the **Showing:** line states which settings are on screen. |
+| Seeds / **Run multi-seed comparison** | Runs the current settings over N consecutive seeds starting at the chosen seed, and gives a verdict. |
 
-```bash
-.venv/Scripts/python -m pytest tests/test_regression.py --update-golden
-```
+**Page, top to bottom**
 
-One seeded simulation, both modes, from the command line:
+1. **Trajectory map**:
+   - the ground truth is the grey dashed line
+   - position observations are grey dots, and false observations are crosses (that label comes from the truth and is for display only; the tracker never sees it)
+   - bearing rays are the faint lines
+   - the baseline estimate is blue and the fusion estimate orange, each with 95 % uncertainty ellipses every 10 s
+   - the sensors are grey squares
+
+   Fusion's ellipses should be narrower across the bearing sensor's line of sight.
+2. **Metrics (this run)**: every metric for baseline, fusion and their difference (see [Metrics](#metrics)).
+3. **Error over time**: the solid lines are the actual distance from the truth; the dotted lines are each filter's
+   own 95 % radius. A solid line that stays above its dotted line means that filter is over-confident.
+4. **Multi-seed comparison** (after you run it): mean ± standard deviation per metric, and the verdict.
+5. **Limitations of this simulation** (expandable).
+
+**A single seed is an anecdote.** Draw conclusions from the multi-seed verdict.
+
+Suggested sequence:
+1. Run `reference` and compare the two estimates through the turn.
+2. Run the multi-seed comparison.
+3. Raise the noise multiplier, then the missed-observation probability.
+4. Switch to `biased_bearing`: RMSE rises and containment collapses.
+5. Switch to `distant_bearing`: the extra sensor adds almost nothing.
+
+## Command line
+
+One seeded simulation, both modes:
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli run --scenario reference --seed 0
 ```
 
-Multi-seed baseline vs fusion comparison over all scenarios (about 45 s for 20 seeds):
+Multi-seed comparison over all scenarios (about 45 s for 20 seeds). Use `--scenario NAME` for one scenario and
+`--first-seed N` to start from a different seed:
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli compare --seeds 20
 ```
 
-Dashboard (served on http://localhost:8501, bound to localhost by `.streamlit/config.toml`):
+## Scenarios
 
-```bash
-.venv/Scripts/python -m streamlit run src/airspace_fusion/app.py
-```
+The simulated world is a flat 2D frame in metres with 1 s scans for 180 s. One object starts at (−1500, 800)
+heading east at 15 m/s. It flies straight, makes a 90° right turn between t = 60 s and 100 s, then flies straight
+again, with a small seeded random acceleration (0.05 m/s²).
 
-## Compatibility and release checks
+| Sensor | Location | Measures | Noise (1σ) | Missed | False observations per scan |
+|---|---|---|---|---|---|
+| `S1-POS` (primary) | (0, 0) | position (x, y) | 25 m per axis | 10 % | 0.2, uniform over ±4 km |
+| `S2-BRG` (supplementary) | (0, −2500) | bearing only | 0.5° | 10 % | 0.2, uniform direction |
 
-| Check | Status |
+About 1 % of all emitted records are deliberately corrupted (NaN values, a timestamp without a time zone, or wrong
+units) so that schema rejection is exercised.
+
+| Scenario | Difference from the above |
 |---|---|
-| Windows, Python 3.10.7 and 3.12.10 (fresh venv, README steps) | all tests pass |
-| Lowest declared dependency versions (`ci/minimum_constraints.py`, Python 3.10) | all tests pass |
-| Install from `requirements.txt` lock | matches the development environment; tests pass |
-| Linux (`.github/workflows/tests.yml`: Ubuntu + Windows, Python 3.10/3.12, minimum versions, nightly slow suite) | **not yet run** - needs a GitHub remote |
+| `reference` | none |
+| `noisy_primary` | position noise 75 m |
+| `distant_bearing` | bearing sensor at (0, −30000) with 2° noise |
+| `biased_bearing` | bearing sensor has an unmodelled +1.5° bias (the tracker is not told) |
 
-Test against the declared minimums locally:
+All values live in [`config.py`](src/airspace_fusion/config.py). Edit `SCENARIOS` to add scenarios, or
+`TrackerConfig` to change tracker settings. For a position sensor, `bias` is added to each axis.
 
-```bash
-python ci/minimum_constraints.py > constraints-min.txt
+## How it works
+
 ```
-
-```bash
-python -m pip install -e ".[dev]" -c constraints-min.txt
+simulate -> sensor records -> schema validation -> tracker (baseline, fusion) -> metrics vs truth -> verdict
 ```
-
-Manual dashboard checklist (per release; the rest is covered by `tests/test_dashboard.py`): the page renders in
-light and dark themes with readable legend, visible sensors and ellipses; at about 800 px wide with the sidebar
-open the metrics table fits and the page has no horizontal scroll; tooltips show units; the server listens on
-127.0.0.1 only (`netstat -an | findstr 8501`).
-
-## What it does
 
 | Module | Responsibility |
 |---|---|
-| `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances, probability ranges. Bearings are normalised to [-π, π). `parse_records` returns invalid records with error messages. |
-| `config.py` | All scenario, sensor and tracker parameters, and four named scenarios. |
-| `simulator.py` | Deterministic truth (straight, 90° turn, straight, plus small seeded random acceleration), two stationary sensors with noise, missed observations, false observations, optional unmodelled bias, and a small fraction of deliberately corrupted records. Truth and truth-side labels are kept apart from the emitted records. |
-| `estimation.py` | Stone Soup Kalman predictor and extended Kalman updater (bearing model with an exact analytic Jacobian); chi-square gating, nearest-in-gate selection per sensor, two-point initiation, coasting, and track drop after `max_coast_s` without a *position* update (bearings cannot keep a track alive on their own). Receives only validated measurements and the scan schedule. |
-| `evaluation.py` | Runs both modes on the *same* simulation, computes metrics against truth, aggregates multiple seeds and gives a paired verdict. |
+| `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances (symmetry relative to matrix scale) and probability ranges. Bearings are normalised to [−π, π). `parse_records` returns invalid records with their errors. |
+| `config.py` | All scenario, sensor and tracker parameters, and the four scenarios. |
+| `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
+| `estimation.py` | Single-target tracker built on Stone Soup (Kalman predictor, extended Kalman updater; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
+| `evaluation.py` | Runs both modes on the same simulation, computes metrics against truth, aggregates seeds and gives a paired verdict. |
 | `cli.py`, `app.py` | Command line and Streamlit/Plotly dashboard. |
 
-**Modes.** *Baseline*: measurements from the position sensor `S1-POS` only. *Fusion*: `S1-POS` plus the bearing
-sensor `S2-BRG`. Both use one simulation per seed, so truth and primary measurements are identical.
+**Tracker behaviour**
 
-**Metrics.** Position RMSE (only at scans with a track), coverage (fraction of scans with a track), 95 %
-containment (fraction of estimates whose 95 % ellipse contains truth; ≈0.95 means the stated uncertainty is
-honest), missed updates (scans with a track but no accepted primary-sensor measurement - comparable across
-modes), prediction-only scans (no sensor updated the track), rejected observations (gate, unsupported type,
-degenerate geometry, duplicate id), invalid records from the mode's own sensors (schema), track initiations,
-processing time.
+- **Motion model:** nearly constant velocity, with process noise 0.5 m²/s³ per axis. The turn is model mismatch that the process noise must absorb.
+- **Each scan:**
+  - predict to the scan time
+  - for each sensor and measurement type, gate the observations with a chi-square test at 99.7 %
+  - apply the in-gate observation with the smallest normalised innovation
+  - positions are applied before bearings
+- **Bearing updates** constrain only the direction across the bearing sensor's line of sight. A bearing is rejected as degenerate geometry when the predicted object is within 3σ of the bearing sensor.
+- **Track start:** two position observations on consecutive scans implying at most 60 m/s. Bearings never start a track.
+- **Track drop:** after 8 s without an accepted **position** update. Bearings refine a track but cannot keep it alive, since they carry no range.
+- **Unsupported types:** `RANGE_BEARING` and `DETECTION_ONLY` are valid in the schema but are explicitly rejected by the tracker, never reinterpreted.
 
-**Filter consistency.** With a motion model matched to the simulator (no turn, matched process noise),
-40 Monte Carlo runs give average NEES ≈ 4 (state dimension), position NIS ≈ 2, bearing NIS ≈ 1 and 95 %
-containment ≈ 0.95 in both modes (`tests/test_consistency.py`). Negative controls confirm the checks fail for
-an over-confident filter and for an unmodelled bearing bias, which shows up as bearing NIS > 1.5.
+## Metrics
 
-**Verdict.** Per-seed RMSEs are paired; fusion "improves" or "worsens" only if a paired t-test gives p < 0.05
-**and** the mean relative change is at least 5 %. Otherwise "no material change".
+| Metric | Meaning | Good |
+|---|---|---|
+| Position RMSE (m) | Root-mean-square distance from truth, over scans **with a track** | lower |
+| Coverage | Share of scans with a track | near 1 |
+| Truth inside 95 % ellipse | Share of estimates whose 95 % ellipse contains the truth | **≈ 0.95**; lower means over-confident |
+| Missed primary-sensor updates | Scans with a track but no accepted position observation (comparable across modes) | lower |
+| Prediction-only scans | Scans with a track but no accepted observation from any sensor | lower |
+| Rejected observations | Rejected by the tracker: outside the gate, not nearest in gate, unsupported type, degenerate geometry, duplicate id | mostly false observations |
+| Invalid records | Records from this mode's sensors that failed schema validation | equals corrupted records |
+| Track initiations | Tracks started | 1; more means the track was lost and restarted |
+| Processing time (s) | Tracker wall time | well under 1 s |
+
+Read RMSE together with coverage, and trust the ellipses only when containment is near 0.95.
+
+**Verdict.** Per-seed RMSEs are paired.
+- **"fusion improves"** or **"fusion worsens"**: the paired t-test gives p < 0.05 **and** the mean relative change is at least 5 %. If every seed changes by exactly the same amount, the change is treated as certain (p = 0).
+- **"no material change"**: any other case.
+- **"insufficient data"**: fewer than two seeds have an RMSE in both modes, for example when no track ever forms.
 
 ## Results (20 seeds, 0–19, `compare --seeds 20`)
 
@@ -125,17 +171,83 @@ an over-confident filter and for an unmodelled bearing bias, which shows up as b
 | distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
 | biased_bearing | 18.83 ± 1.7 | 37.06 ± 4.0 | +18.23 m [+16.33, +20.13], +96.8 % | 0.28 | worsens |
 
-Coverage is identical between modes (0.96–0.99). In `biased_bearing` fusion also misses more primary updates
-(about 25 vs 19.5 per run): the bias drags the estimate far enough that correct position measurements fail the gate.
-Run the command to reproduce.
+Coverage is identical between modes in every scenario (0.96–0.99).
+
+In `biased_bearing`, fusion also misses more primary updates (24.5 vs 19.45 per run): the bias drags the estimate far enough that correct position observations fail the gate. A bias sweep (`tests/test_statistics.py`) shows the damage is not monotonic. Fusion error grows up to about 2° of bias, then falls at 3°, because the gate rejects most grossly biased bearings. A moderate bias does the most harm.
+
+**Filter consistency.** With a motion model matched to the simulator (no turn, matched process noise), 40 Monte Carlo runs give:
+- average NEES ≈ 4 (the state dimension)
+- position NIS ≈ 2 and bearing NIS ≈ 1
+- 95 % containment ≈ 0.95 in both modes
+
+See `tests/test_consistency.py`. Negative controls confirm the checks fail for an over-confident filter, and for an unmodelled bearing bias, which shows up as bearing NIS above 1.5.
 
 ## Limitations
 
 - Single synthetic object, two stationary synthetic sensors, generic 2D frame. No real hardware, terrain or propagation.
-- Nearly-constant-velocity model; the turn is model mismatch absorbed by process noise (baseline 95 % containment ≈0.92, i.e. slightly over-confident).
-- Bearing updates are linearised (EKF). Information depends strongly on geometry: a distant bearing sensor adds almost nothing; a target close to the bearing sensor relative to its uncertainty is rejected as degenerate rather than processed.
-- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline (`biased_bearing`). The filter cannot correct this itself, although it shows up as bearing NIS well above 1. The damage is not monotonic: in a bias sweep, fusion error grows up to about 2°, then falls again at 3° because the gate rejects most grossly biased bearings (see `tests/test_statistics.py`).
-- Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan), and two-point initiation can occasionally start on two aligned false observations before the real track; there is no multi-object association, track management beyond initiation/drop, or ambiguity resolution.
-- `RANGE_BEARING` and `DETECTION_ONLY` are validated by the schema but explicitly rejected by the estimator (`rejected_unsupported_type`).
-- RMSE is evaluated only where a track exists; read it together with coverage.
+- Nearly-constant-velocity model; the turn is absorbed by process noise (baseline 95 % containment ≈ 0.92, i.e. slightly over-confident).
+- Bearing updates are linearised (EKF). Their value depends strongly on geometry: a distant bearing sensor adds almost nothing.
+- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
+- Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.
+- RMSE is evaluated only where a track exists.
 - Process noise and gate settings were chosen once and are shared by both modes; they were not tuned per scenario.
+
+## Development and testing
+
+Fast suite (about 25 s). It includes:
+- property-based schema fuzzing (`hypothesis`)
+- checks of the tracker against textbook Kalman/EKF formulas written in plain NumPy
+- end-to-end edge cases and module dependency rules
+- CLI tests
+- the golden regression
+
+```bash
+.venv/Scripts/python -m pytest
+```
+
+Slow suite (about 3 min): Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep, headless dashboard tests, performance budgets, and a cross-process reproducibility check.
+
+```bash
+.venv/Scripts/python -m pytest -m slow
+```
+
+`tests/test_regression.py` compares per-seed metrics and a simulator-output checksum against `tests/golden/regression.json`. If a change to results is intended, regenerate it and review the JSON diff with the code change:
+
+```bash
+.venv/Scripts/python -m pytest tests/test_regression.py --update-golden
+```
+
+### Compatibility and release checks
+
+| Check | Status |
+|---|---|
+| Windows, Python 3.10.7 and 3.12.10 (fresh venv, README steps) | all tests pass |
+| Lowest declared dependency versions (Python 3.10) | all tests pass |
+| Install from the `requirements.txt` lock (fresh venv) | tests pass |
+| CI (`.github/workflows/tests.yml`): Ubuntu and Windows, Python 3.10/3.12, minimum versions, nightly slow suite | **not yet run** (needs a GitHub remote) |
+
+`requirements.txt` is an optional pinned lock of a known-good environment:
+
+```bash
+.venv/Scripts/python -m pip install -r requirements.txt
+```
+
+To test against the declared minimum versions, use a fresh virtual environment. On Python 3.10, first install `tomli`; the script needs it to read `pyproject.toml`. `constraints-min.txt` is gitignored.
+
+```bash
+python -m pip install tomli
+```
+
+```bash
+python ci/minimum_constraints.py > constraints-min.txt
+```
+
+```bash
+python -m pip install -e ".[dev]" -c constraints-min.txt
+```
+
+Manual dashboard checklist, per release (everything else is covered by `tests/test_dashboard.py`):
+- the page renders in light and dark themes, with a readable legend and visible sensors and ellipses
+- at about 800 px wide with the sidebar open, the metrics table fits and the page has no horizontal scroll
+- tooltips show units
+- the server listens on 127.0.0.1 only: `netstat -an | findstr 8501` on Windows, `ss -ltn | grep 8501` on Linux

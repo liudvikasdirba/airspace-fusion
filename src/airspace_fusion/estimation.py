@@ -11,7 +11,7 @@ Model and assumptions (deliberately simple):
 * BEARING_ONLY: ``atan2`` measurement from the reporting sensor's position with
   the reported angular variance, linearised by an extended Kalman update.
   Innovations are wrapped to [-pi, pi) (Stone Soup ``Bearing`` arithmetic).
-* Exactly one object. Each sensor contributes at most one measurement per scan:
+* Exactly one object. Each sensor contributes at most one measurement of each type per scan:
   the in-gate candidate with the smallest normalised innovation squared (NIS).
   This is gating plus nearest-neighbour selection, not multi-object association.
 * Measurement errors are assumed zero-mean, white and independent across

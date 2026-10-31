@@ -6,3 +6,4 @@ data/
 *.egg-info/
 build/
 dist/
+constraints-min.txt

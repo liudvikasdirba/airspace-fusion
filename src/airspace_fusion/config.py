@@ -25,7 +25,8 @@ class SensorConfig(BaseModel):
 
     ``noise_std`` is in metres for POSITION_2D and radians for BEARING_ONLY.
     ``bias`` is an *unmodelled* systematic error in the same units, added by the
-    simulator only; the tracker is never told about it.
+    simulator only; the tracker is never told about it. For POSITION_2D it is added
+    to each axis, so the offset magnitude is ``bias * sqrt(2)``.
     """
 
     model_config = ConfigDict(frozen=True)
