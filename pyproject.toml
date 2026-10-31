@@ -7,7 +7,7 @@ name = "airspace-fusion"
 version = "0.1.0"
 description = "Simulation-only single-object multi-sensor tracking demonstrator (educational prototype)."
 readme = "README.md"
-# Written and tested on 3.10; 3.12+ is the intended target and is supported.
+# Tested on 3.10.7 and 3.12.10 (3.12+ recommended).
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
@@ -29,7 +29,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow'"
+markers = ["slow: Monte Carlo and sweep tests (run with -m slow)"]
 filterwarnings = ["error::DeprecationWarning:airspace_fusion", "error::RuntimeWarning:airspace_fusion"]
 
 [tool.ruff]

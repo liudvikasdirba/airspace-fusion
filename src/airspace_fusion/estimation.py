@@ -30,7 +30,7 @@ from __future__ import annotations
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -98,6 +98,8 @@ class TrackerResult:
     track_initiations: int
     processing_time_s: float
     duplicate_count: int = 0  # records whose measurement_id was already seen; not processed
+    # Normalised innovation squared of each accepted update, for filter consistency checks.
+    update_nis: dict[str, float] = field(default_factory=dict)
 
     @property
     def disposition_counts(self) -> Counter[str]:
@@ -227,6 +229,7 @@ class SingleTargetTracker:
         report_set = set(report_times)
 
         dispositions: dict[str, str] = {}
+        update_nis: dict[str, float] = {}
         duplicates = 0
         by_time: dict[datetime, list[Measurement]] = defaultdict(list)
         for m in measurements:
@@ -259,7 +262,7 @@ class SingleTargetTracker:
             if track is not None:
                 state = track
                 for group in _group_by_sensor_and_type(scan):
-                    state, used = self._update_with_sensor(state, group, t, dispositions)
+                    state, used = self._update_with_sensor(state, group, t, dispositions, update_nis)
                     accepted.extend(used)
                 track = state if state.timestamp == t else self.predictor.predict(state, timestamp=t)
                 if accepted:
@@ -296,10 +299,16 @@ class SingleTargetTracker:
             track_initiations=initiations,
             processing_time_s=time.perf_counter() - started,
             duplicate_count=duplicates,
+            update_nis=update_nis,
         )
 
     def _update_with_sensor(
-        self, state: GaussianState, group: list[Measurement], t: datetime, dispositions: dict[str, str]
+        self,
+        state: GaussianState,
+        group: list[Measurement],
+        t: datetime,
+        dispositions: dict[str, str],
+        update_nis: dict[str, float] | None = None,
     ) -> tuple[GaussianState, list[Measurement]]:
         """Gate one sensor's measurements of one type and apply the nearest in-gate one."""
         prior = self.predictor.predict(state, timestamp=t)
@@ -317,12 +326,14 @@ class SingleTargetTracker:
         if not candidates:
             return prior, []
         candidates.sort(key=lambda c: (c[0], c[1].measurement_id))
-        _, chosen, hypothesis = candidates[0]
+        chosen_nis, chosen, hypothesis = candidates[0]
         for _, m, _ in candidates[1:]:
             dispositions[m.measurement_id] = Disposition.NOT_SELECTED
         posterior = self.updater.update(hypothesis)
         self._check_state(posterior)
         dispositions[chosen.measurement_id] = Disposition.ACCEPTED
+        if update_nis is not None:
+            update_nis[chosen.measurement_id] = chosen_nis
         return posterior, [chosen]
 
 

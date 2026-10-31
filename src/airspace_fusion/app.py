@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, ScenarioConfig, TrackerConfig
+from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig, with_sensor_overrides
 from airspace_fusion.estimation import Estimate
 from airspace_fusion.evaluation import CHI2_2DOF_95, METRIC_NAMES, Mode, SingleRun, compare_modes, run_single
 from airspace_fusion.schemas import MeasurementType
@@ -32,20 +32,6 @@ LIMITATIONS = """
 - RMSE is computed only where a track exists; compare it together with coverage.
 - "False observation" markers use truth-side labels for display only; the tracker never sees them.
 """
-
-
-def build_scenario(base: ScenarioConfig, noise_multiplier: float, miss_probability: float) -> ScenarioConfig:
-    overrides = dict(detection_probability=1.0 - miss_probability)
-    return base.model_copy(
-        update={
-            "primary": base.primary.model_copy(
-                update={**overrides, "noise_std": base.primary.noise_std * noise_multiplier}
-            ),
-            "secondary": base.secondary.model_copy(
-                update={**overrides, "noise_std": base.secondary.noise_std * noise_multiplier}
-            ),
-        }
-    )
 
 
 def ellipse_xy(mean: np.ndarray, cov: np.ndarray, scale2: float = CHI2_2DOF_95) -> tuple[np.ndarray, np.ndarray]:
@@ -204,7 +190,7 @@ def main() -> None:
         n_seeds = st.number_input("Seeds for multi-seed comparison", min_value=2, max_value=100, value=10)
         compare_clicked = st.button("Run multi-seed comparison", width="stretch")
 
-    scenario = build_scenario(SCENARIOS[scenario_name], noise, miss)
+    scenario = with_sensor_overrides(SCENARIOS[scenario_name], noise, miss)
     tracker = TrackerConfig()
     if run_clicked or "run" not in st.session_state:
         st.session_state["run"] = run_single(scenario, tracker, int(seed))

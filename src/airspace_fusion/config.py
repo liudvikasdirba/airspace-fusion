@@ -94,6 +94,20 @@ class TrackerConfig(BaseModel):
     max_coast_s: float = Field(default=8.0, gt=0.0)
 
 
+def with_sensor_overrides(
+    base: ScenarioConfig, noise_multiplier: float = 1.0, miss_probability: float | None = None
+) -> ScenarioConfig:
+    """Scale both sensors' noise and optionally set a common missed-observation probability."""
+    sensors = {}
+    for key in ("primary", "secondary"):
+        sensor: SensorConfig = getattr(base, key)
+        update: dict[str, object] = {"noise_std": sensor.noise_std * noise_multiplier}
+        if miss_probability is not None:
+            update["detection_probability"] = 1.0 - miss_probability
+        sensors[key] = sensor.model_copy(update=update)
+    return base.model_copy(update=sensors)
+
+
 def default_primary(**overrides: object) -> SensorConfig:
     values: dict[str, object] = dict(
         sensor_id=PRIMARY_SENSOR_ID,

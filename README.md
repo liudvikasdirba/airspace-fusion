@@ -8,7 +8,7 @@ This is an educational research prototype. It connects to no real sensors, feeds
 
 ## Install
 
-Requires Python 3.10+ (3.12+ recommended). From the repository root:
+Requires Python 3.10+ (3.12+ recommended; tested on 3.10.7 and 3.12.10). From the repository root:
 
 ```bash
 python -m venv .venv
@@ -22,10 +22,23 @@ python -m venv .venv
 
 ## Run
 
-Tests:
+Tests (fast suite, about 15 s):
 
 ```bash
 .venv/Scripts/python -m pytest
+```
+
+Slow suite - Monte Carlo filter-consistency checks and the edge-settings sweep (about 1.5 min):
+
+```bash
+.venv/Scripts/python -m pytest -m slow
+```
+
+`tests/test_regression.py` compares per-seed metrics and a simulator-output checksum against
+`tests/golden/regression.json`. If a change to results is intended, regenerate it and review the JSON diff:
+
+```bash
+.venv/Scripts/python -m pytest tests/test_regression.py --update-golden
 ```
 
 One seeded simulation, both modes, from the command line:
@@ -66,6 +79,11 @@ honest), missed updates (scans with a track but no accepted primary-sensor measu
 modes), prediction-only scans (no sensor updated the track), rejected observations (gate, unsupported type,
 degenerate geometry, duplicate id), invalid records from the mode's own sensors (schema), track initiations,
 processing time.
+
+**Filter consistency.** With a motion model matched to the simulator (no turn, matched process noise),
+40 Monte Carlo runs give average NEES ≈ 4 (state dimension), position NIS ≈ 2, bearing NIS ≈ 1 and 95 %
+containment ≈ 0.95 in both modes (`tests/test_consistency.py`). Negative controls confirm the checks fail for
+an over-confident filter and for an unmodelled bearing bias, which shows up as bearing NIS > 1.5.
 
 **Verdict.** Per-seed RMSEs are paired; fusion "improves" or "worsens" only if a paired t-test gives p < 0.05
 **and** the mean relative change is at least 5 %. Otherwise "no material change".
