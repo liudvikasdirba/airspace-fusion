@@ -89,6 +89,61 @@ Multi-seed comparison over all scenarios (about 45 s for 20 seeds). Use `--scena
 .venv/Scripts/python -m airspace_fusion.cli compare --seeds 20
 ```
 
+## Learning loop
+
+`learn` tunes the tracker settings per scenario and writes them to a **rule book** that later runs start from.
+Learning runs use their own seeds (training 1000–1005 and held-out 2000–2005 by default), so the
+[Results](#results-20-seeds-019-compare---seeds-20) seeds 0–19 remain an independent test.
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli learn --rounds 3
+```
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli compare --seeds 20 --rules data/learning/rules.json
+```
+
+The rule book (`data/learning/rules.json`) and an append-only JSONL run log (`data/learning/log.jsonl`) live under
+the gitignored `data/` folder. Delete the rule book to start learning from scratch.
+
+Each round runs the same plan for every scenario. The orchestrator routes each step to an agent, retries a failed
+step once, logs every step, and skips a scenario that keeps failing without stopping the run:
+
+| Step | Agent | What it does |
+|---|---|---|
+| 1 | research | Scores the rule book's current settings on the training seeds and lists the gaps. |
+| 2 | qa | If fusion made RMSE worse, checks this on the held-out seeds; if confirmed, fusion is recommended against for that scenario and tuning scores the baseline only. |
+| 3 | research | Proposes up to 4 candidate settings based on the gaps: over-confident → more process noise, under-confident → less, lost tracks → longer coast and wider gate, no gaps → a small step either way. Settings already tried are skipped. |
+| 4 | experiment | Scores every candidate on the training seeds and keeps the best one that beats the current settings. |
+| 5 | qa | Accepts that candidate only if its held-out score is at least 2 % better and coverage drops by no more than 0.01. |
+| 6 | content | Writes the report. |
+
+**Score** is the mean RMSE of the modes in use, multiplied by `1 + 5 × |containment − 0.95|`: a one-point
+containment shortfall costs as much as 5 % RMSE, so a candidate cannot win by becoming over-confident.
+
+**Gaps** are containment more than 0.02 from 0.95, coverage below 0.95, more than one track initiation per run on
+average, and a "fusion worsens" verdict.
+
+Every tried change becomes a **lesson**, whether accepted or rejected. The learning update applies the accepted
+lessons to the rule book, re-checked against fixed bounds (process noise 0.05–5, gate 0.99–0.9999, coast 4–20 s),
+and keeps all lessons as memory. A run stops early when a round accepts nothing.
+
+Ground truth is used only to score settings, which is possible only in simulation. The tracker is unchanged and
+still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
+always give the same result.
+
+Result of `learn --rounds 3` from an empty rule book (about 90 s; converges after round 2), checked on seeds 0–19:
+
+| Scenario | Learned settings | Baseline RMSE (m) | Fusion RMSE (m) | Baseline 95 % containment |
+|---|---|---|---|---|
+| reference | q = 0.625 | 18.83 → 18.62 | 16.70 → 16.56 | 0.92 → 0.94 |
+| noisy_primary | q = 0.75 | 49.67 → 48.38 | 37.83 → 37.25 | 0.88 → 0.91 |
+| distant_bearing | q = 0.625 | 18.83 → 18.62 | 18.83 → 18.62 | 0.92 → 0.94 |
+| biased_bearing | q = 0.625, fusion recommended against | 18.83 → 18.62 | (37.06 → 36.83) | 0.92 → 0.94 |
+
+The gains are small but appear on seeds the loop never saw. The verdicts do not change. In `biased_bearing`, the
+loop learns that fusion should not be used, but it cannot fix the bias: the bias is a sensor error, not a setting.
+
 ## Scenarios
 
 The simulated world is a flat 2D frame in metres with 1 s scans for 180 s. One object starts at (−1500, 800)
@@ -126,6 +181,8 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
 | `estimation.py` | Single-target tracker built on Stone Soup (Kalman predictor, extended Kalman updater; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
 | `evaluation.py` | Runs both modes on the same simulation, computes metrics against truth, aggregates seeds and gives a paired verdict. |
+| `learning.py` | Learning loop: score, gaps, lessons, the bounded rule book (JSON) and the JSONL run log. |
+| `agents.py` | Orchestrator and the research, experiment, QA and content agents that run the learning plan. |
 | `cli.py`, `app.py` | Command line and Streamlit/Plotly dashboard. |
 
 **Tracker behaviour**
@@ -190,7 +247,7 @@ See `tests/test_consistency.py`. Negative controls confirm the checks fail for a
 - Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
 - Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.
 - RMSE is evaluated only where a track exists.
-- Process noise and gate settings were chosen once and are shared by both modes; they were not tuned per scenario.
+- Process noise and gate settings are shared by both modes. The [Results](#results-20-seeds-019-compare---seeds-20) use the untuned defaults; `learn` can tune them per scenario (see [Learning loop](#learning-loop)).
 
 ## Development and testing
 

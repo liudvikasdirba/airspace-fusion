@@ -110,7 +110,9 @@ ALLOWED_IMPORTS = {
     "simulator": {"config", "schemas"},
     "estimation": {"config", "schemas"},
     "evaluation": {"config", "estimation", "schemas", "simulator"},
-    "cli": {"config", "evaluation"},
+    "learning": {"config", "evaluation"},
+    "agents": {"config", "evaluation", "learning"},
+    "cli": {"agents", "config", "evaluation", "learning"},
     "app": {"config", "estimation", "evaluation", "schemas"},
 }
 
