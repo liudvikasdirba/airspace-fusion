@@ -251,3 +251,7 @@ Manual dashboard checklist, per release (everything else is covered by `tests/te
 - at about 800 px wide with the sidebar open, the metrics table fits and the page has no horizontal scroll
 - tooltips show units
 - the server listens on 127.0.0.1 only: `netstat -an | findstr 8501` on Windows, `ss -ltn | grep 8501` on Linux
+
+## License
+
+MIT. See [LICENSE](LICENSE).

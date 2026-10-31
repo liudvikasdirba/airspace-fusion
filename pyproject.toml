@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "airspace-fusion"
 version = "0.1.0"
 description = "Simulation-only single-object multi-sensor tracking demonstrator (educational prototype)."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Liudvikas"}]
 # Tested on 3.10.7 and 3.12.10 (3.12+ recommended).
 requires-python = ">=3.10"
 dependencies = [
