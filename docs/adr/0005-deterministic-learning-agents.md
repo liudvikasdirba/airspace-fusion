@@ -19,7 +19,8 @@ would also overfit.
 The agents are plain, deterministic Python. Candidate settings are scored on training seeds (1000 onwards by
 default) and accepted only if they also win, by at least 2 %, on separate held-out seeds (2000 onwards). The
 README results use seeds 0–19, which the loop never sees. Accepted changes are re-checked against fixed bounds
-before they enter the rule book, and every tried change is kept as a lesson.
+before they enter the rule book, and every tried change is recorded as a lesson. The rule book keeps the newest
+100 lessons per scenario, so it stays bounded and long-forgotten rejections can eventually be retried.
 
 ## Consequences
 

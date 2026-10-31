@@ -12,8 +12,10 @@ All notable changes to this project are recorded here. The format follows
 
 - `learn` command: a closed learning loop in which research, experiment, QA and content agents tune the
   tracker settings per scenario on training seeds. A change is accepted only if it also wins on held-out
-  seeds. Results go to a bounded JSON rule book and a JSONL run log under `data/learning/`.
-- `compare --rules PATH` evaluates the settings from a learned rule book.
+  seeds. Results go to a bounded JSON rule book (newest 100 lessons per scenario) and a JSONL run log under
+  `data/learning/`. Evaluations are cached within a run. `learn` exits with status 1 if any scenario failed.
+  An unreadable rule book stops the command with an error that names the file.
+- `compare --rules PATH` evaluates the settings from a learned rule book; the file must exist.
 - `airspace-fusion --version`.
 - Versioning: the package version is defined once, in `airspace_fusion.__version__`. `ci/release.py`
   checks that `CITATION.cff` and this changelog agree with it and cuts releases.

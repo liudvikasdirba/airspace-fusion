@@ -21,7 +21,7 @@ rule book always give the same result.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from airspace_fusion import __version__
@@ -67,9 +67,26 @@ Evaluate = Callable[[ScenarioConfig, TrackerConfig, Sequence[int]], ComparisonSu
 
 @dataclass(frozen=True)
 class Skills:
-    """Reusable capabilities the agents call. ``evaluate`` is the only expensive one."""
+    """Reusable capabilities the agents call. ``evaluate`` is the only expensive one.
+
+    ``evaluate`` must be deterministic in (scenario, tracker, seeds): the orchestrator caches its results.
+    """
 
     evaluate: Evaluate = compare_modes
+
+
+class CachedEvaluate:
+    """Memoises evaluations for one orchestrator, so settings scored in an earlier step or round are reused."""
+
+    def __init__(self, evaluate: Evaluate) -> None:
+        self._evaluate = evaluate
+        self._results: dict[tuple[ScenarioConfig, TrackerConfig, tuple[int, ...]], ComparisonSummary] = {}
+
+    def __call__(self, scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Sequence[int]) -> ComparisonSummary:
+        key = (scenario, tracker, tuple(seeds))
+        if key not in self._results:
+            self._results[key] = self._evaluate(scenario, tracker, seeds)
+        return self._results[key]
 
 
 @dataclass
@@ -159,7 +176,7 @@ class QAAgent:
             return
         holdout = self._holdout_incumbent(work, ctx)
         confirmed = holdout.verdict is Verdict.WORSENS
-        work.lessons.append(Lesson(
+        lesson = Lesson(
             run_id=ctx.log.run_id,
             scenario=work.name,
             action=LessonAction.DISABLE_FUSION,
@@ -168,11 +185,14 @@ class QAAgent:
             reason=f"held-out verdict: {holdout.verdict.value} ({holdout.rmse_relative_change:+.1%} RMSE)",
             holdout_score_before=finite_or_none(score(holdout, scored_modes(True))),
             holdout_score_after=finite_or_none(score(holdout, scored_modes(False))),
-        ))
+        )
+        # Tune for the baseline only from here on: chasing a harmful sensor's containment is pointless.
+        # Everything is computed before anything is committed, so a retried step cannot record the lesson twice.
+        gaps = find_gaps(work.train, scored_modes(False)) if confirmed else work.gaps
+        work.lessons.append(lesson)
         if confirmed:
-            # Tune for the baseline only from here on: chasing a harmful sensor's containment is pointless.
             work.fusion_enabled = False
-            work.gaps = find_gaps(work.train, work.modes)
+            work.gaps = gaps
 
     def holdout(self, work: ScenarioWork, ctx: StepContext) -> None:
         if work.best is None:
@@ -254,7 +274,8 @@ class Orchestrator:
     ) -> None:
         self.rules = rules
         self.log = log
-        self.skills = skills or Skills()
+        base = skills or Skills()
+        self.skills = replace(base, evaluate=CachedEvaluate(base.evaluate))
         self.max_retries = max_retries
         self.rules_path = rules_path
         self.agents = {a.name: a for a in (ResearchAgent(), ExperimentAgent(), QAAgent(), ContentAgent())}
@@ -263,7 +284,7 @@ class Orchestrator:
         ctx = StepContext(task, self.skills, self.log)
         all_lessons: list[Lesson] = []
         report: list[str] = []
-        failures: list[Gap] = []
+        failed: dict[str, Gap] = {}  # one entry per scenario, however many rounds it failed in
         rounds_run = 0
         self.log.record("task", package_version=__version__, scenarios=[s.name for s in task.scenarios],
                         train_seeds=task.train_seeds, holdout_seeds=task.holdout_seeds, rounds=rounds,
@@ -273,7 +294,9 @@ class Orchestrator:
             report.append(f"-- round {round_index + 1} (rule book v{self.rules.version})")
             works = [self._execute(scenario, ctx) for scenario in task.scenarios]
             lessons = [lesson for w in works for lesson in w.lessons]
-            failures += [Gap(GapKind.STEP_FAILED, w.name, None, 1.0, 0.0) for w in works if w.failed_step]
+            for w in works:
+                if w.failed_step:
+                    failed.setdefault(w.name, Gap(GapKind.STEP_FAILED, w.name, None, 1.0, 0.0))
             for w in works:
                 report.extend(w.report)
             self.rules = self.rules.with_lessons(lessons)
@@ -286,7 +309,7 @@ class Orchestrator:
             if not accepted:
                 report.append("-- nothing new accepted; stopping")
                 break
-        return LearningOutcome(self.rules, rounds_run, tuple(all_lessons), tuple(report), tuple(failures))
+        return LearningOutcome(self.rules, rounds_run, tuple(all_lessons), tuple(report), tuple(failed.values()))
 
     def _execute(self, scenario: ScenarioConfig, ctx: StepContext) -> ScenarioWork:
         work = ScenarioWork(

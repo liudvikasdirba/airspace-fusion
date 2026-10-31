@@ -11,11 +11,10 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 import airspace_fusion
 from airspace_fusion.cli import main
-from airspace_fusion.learning import RULE_BOOK_FORMAT, RuleBook
+from airspace_fusion.learning import RULE_BOOK_FORMAT, RuleBook, RuleBookError
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
@@ -127,7 +126,7 @@ def test_rule_book_records_versions_and_rejects_unknown_format(tmp_path):
     assert book.package_version == airspace_fusion.__version__
     path = tmp_path / "rules.json"
     path.write_text(json.dumps(book.model_dump(mode="json") | {"format_version": RULE_BOOK_FORMAT + 1}))
-    with pytest.raises(ValidationError, match="format_version"):
+    with pytest.raises(RuleBookError, match="format_version"):
         RuleBook.load(path)
 
 
@@ -199,6 +198,26 @@ def test_changelog_format_errors(bad, message):
     text = "# Changelog\n\n## [Unreleased]\n\n" + bad if not bad.startswith("## [Unreleased]") else bad
     with pytest.raises(release.ReleaseError, match=message):
         release.parse_changelog(text)
+
+
+# (A compact date such as 20261031 in a heading is already rejected as a bad heading.)
+@pytest.mark.parametrize("bad_date", ["2026-13-31", "2026-02-30"])
+def test_invalid_dates_are_reported_not_raised(repo, bad_date):
+    path = repo / release.CHANGELOG
+    text = path.read_text(encoding="utf-8")
+    current = release.read_version(repo)
+    heading = re.search(rf"^## \[{re.escape(current)}\] - .*$", text, re.MULTILINE)[0]
+    path.write_text(text.replace(heading, f"## [{current}] - {bad_date}"), encoding="utf-8")
+    problems = release.check(repo)
+    assert len(problems) == 1 and "not a valid YYYY-MM-DD date" in problems[0]
+
+
+@pytest.mark.parametrize("bad_date", ["2099-13-01", "20991231"])
+def test_release_rejects_invalid_release_date(repo, bad_date):
+    changelog(repo, "\n- x\n\n")
+    with pytest.raises(release.ReleaseError, match="not a valid YYYY-MM-DD date"):
+        release.release("9.0.0", bad_date, root=repo)
+    assert release.check(repo) == []
 
 
 def test_changelog_releases_must_be_newest_first():

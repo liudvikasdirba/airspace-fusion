@@ -9,7 +9,9 @@ The loop turns evaluation results into reusable tracker settings:
 * **Gaps**: measurable shortfalls (over- or under-confidence, low coverage, track restarts,
   fusion making things worse) that steer which candidate settings are worth trying.
 * **Lessons**: one per tried change, kept whether accepted or rejected. Settings already tried
-  are not proposed again, so later runs start from what earlier runs learned.
+  are not proposed again, so later runs start from what earlier runs learned. Only the newest
+  ``MAX_LESSONS_PER_SCENARIO`` lessons per scenario are kept, so the rule book stays bounded and
+  long-forgotten rejections can eventually be tried again.
 * **Rule book**: per-scenario ``TrackerConfig`` defaults and fusion policy, persisted as
   JSON. Only lessons accepted on held-out seeds are applied, within ``TUNABLE_BOUNDS``.
 
@@ -28,7 +30,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from airspace_fusion import __version__
 from airspace_fusion.config import TrackerConfig
@@ -50,6 +52,9 @@ MAX_TRACK_INITIATIONS = 1.05
 MIN_SCORE_IMPROVEMENT = 0.02
 # ...and may not lose more than this much coverage in any scored mode.
 MAX_COVERAGE_LOSS = 0.01
+
+# Lesson memory kept per scenario; older lessons are dropped by the learning update.
+MAX_LESSONS_PER_SCENARIO = 100
 
 # Constraints on what the learning update may change, and the allowed range of each setting.
 TUNABLE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -192,6 +197,20 @@ def finite_or_none(value: float) -> float | None:
     return value if math.isfinite(value) else None
 
 
+class RuleBookError(ValueError):
+    """A rule book file is missing (when required) or cannot be read."""
+
+
+def _newest_per_scenario(lessons: Sequence[Lesson], limit: int) -> tuple[Lesson, ...]:
+    kept: list[Lesson] = []
+    counts: dict[str, int] = {}
+    for lesson in reversed(lessons):
+        counts[lesson.scenario] = counts.get(lesson.scenario, 0) + 1
+        if counts[lesson.scenario] <= limit:
+            kept.append(lesson)
+    return tuple(reversed(kept))
+
+
 class RuleBook(BaseModel):
     """Learned defaults and policies, plus the lesson memory they came from."""
 
@@ -226,7 +245,8 @@ class RuleBook(BaseModel):
         return tried
 
     def with_lessons(self, lessons: Sequence[Lesson]) -> RuleBook:
-        """Learning update: remember every lesson, apply the accepted ones (re-validated against the bounds)."""
+        """Learning update: apply the accepted lessons (re-validated against the bounds) and remember the
+        newest ``MAX_LESSONS_PER_SCENARIO`` lessons per scenario."""
         trackers = dict(self.trackers)
         disabled = list(self.fusion_disabled)
         for lesson in lessons:
@@ -243,15 +263,23 @@ class RuleBook(BaseModel):
                 package_version=__version__,
                 trackers=trackers,
                 fusion_disabled=tuple(disabled),
-                lessons=(*self.lessons, *lessons),
+                lessons=_newest_per_scenario((*self.lessons, *lessons), MAX_LESSONS_PER_SCENARIO),
             )
         )
 
     @classmethod
-    def load(cls, path: Path) -> RuleBook:
+    def load(cls, path: Path, must_exist: bool = False) -> RuleBook:
+        """Read a rule book. A missing file is an empty rule book unless ``must_exist`` is set."""
         if not path.exists():
+            if must_exist:
+                raise RuleBookError(f"rule book {path} does not exist")
             return cls()
-        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+        try:
+            return cls.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValidationError) as exc:
+            raise RuleBookError(
+                f"cannot read rule book {path} (delete it to start learning from scratch): {exc}"
+            ) from exc
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

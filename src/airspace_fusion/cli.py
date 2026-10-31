@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from airspace_fusion import __version__
 from airspace_fusion.agents import LearningTask, Orchestrator, describe_tracker
 from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import METRIC_NAMES, Mode, compare_modes, run_single
-from airspace_fusion.learning import RuleBook, RunLog
+from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
 
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
@@ -34,10 +35,18 @@ def _run(args: argparse.Namespace) -> None:
         print(f"{name:<24}" + "".join(f"{v:>14.4g}" for v in values))
 
 
+def _load_rules(args: argparse.Namespace, must_exist: bool) -> RuleBook:
+    try:
+        return RuleBook.load(args.rules, must_exist=must_exist)
+    except RuleBookError as exc:
+        args.parser.error(str(exc))
+
+
 def _compare(args: argparse.Namespace) -> None:
     names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
-    rules = RuleBook.load(args.rules) if args.rules else None
+    # An explicitly named rule book must exist: silently falling back to defaults would mislabel the results.
+    rules = _load_rules(args, must_exist=True) if args.rules else None
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
     for name in names:
         tracker = rules.tracker_for(name) if rules else TrackerConfig()
@@ -56,7 +65,7 @@ def _compare(args: argparse.Namespace) -> None:
         print(f"VERDICT: {s.verdict.value}\n")
 
 
-def _learn(args: argparse.Namespace) -> None:
+def _learn(args: argparse.Namespace) -> int:
     names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
     try:
         task = LearningTask(
@@ -67,8 +76,9 @@ def _learn(args: argparse.Namespace) -> None:
         )
     except ValueError as exc:
         args.parser.error(str(exc))
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    orchestrator = Orchestrator(RuleBook.load(args.rules), RunLog(run_id, args.log), rules_path=args.rules)
+    # Microseconds keep run ids distinct when several runs start within the same second.
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    orchestrator = Orchestrator(_load_rules(args, must_exist=False), RunLog(run_id, args.log), rules_path=args.rules)
     outcome = orchestrator.run(task, rounds=args.rounds)
     print(f"run {run_id}: train seeds {task.train_seeds[0]}..{task.train_seeds[-1]}, "
           f"held-out seeds {task.holdout_seeds[0]}..{task.holdout_seeds[-1]}\n")
@@ -77,10 +87,13 @@ def _learn(args: argparse.Namespace) -> None:
     print(f"\nrule book v{outcome.rules.version} saved to {args.rules} "
           f"({accepted} of {len(outcome.lessons)} lessons accepted in {outcome.rounds_run} round(s)); log: {args.log}")
     if outcome.failures:
-        print(f"FAILED scenarios: {', '.join(g.scenario for g in outcome.failures)}")
+        print(f"FAILED scenarios: {', '.join(g.scenario for g in outcome.failures)}", file=sys.stderr)
+        return 1
+    return 0
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
+    """Run the command line. Returns the process exit status (non-zero when a learning run had failures)."""
     parser = argparse.ArgumentParser(prog="airspace-fusion", description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -95,7 +108,7 @@ def main(argv: list[str] | None = None) -> None:
     cmp_p.add_argument("--seeds", type=_positive_int, default=20)
     cmp_p.add_argument("--first-seed", type=int, default=0)
     cmp_p.add_argument("--rules", type=Path, help="use the tracker settings from a learned rule book")
-    cmp_p.set_defaults(func=_compare)
+    cmp_p.set_defaults(func=_compare, parser=cmp_p)
 
     learn_p = sub.add_parser("learn", help="tune tracker settings per scenario; results go to a rule book")
     learn_p.add_argument("--scenario", choices=[*SCENARIOS, "all"], default="all")
@@ -110,8 +123,8 @@ def main(argv: list[str] | None = None) -> None:
     learn_p.set_defaults(func=_learn, parser=learn_p)
 
     args = parser.parse_args(argv)
-    args.func(args)
+    return args.func(args) or 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

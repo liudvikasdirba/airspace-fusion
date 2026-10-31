@@ -8,17 +8,20 @@ import math
 import pytest
 from pydantic import ValidationError
 
+import airspace_fusion.agents as agents
 from airspace_fusion.agents import PLAN, LearningTask, Orchestrator, Skills
 from airspace_fusion.cli import main
 from airspace_fusion.config import SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import METRIC_NAMES, ComparisonSummary, MetricSummary, Mode, Verdict
 from airspace_fusion.learning import (
+    MAX_LESSONS_PER_SCENARIO,
     TUNABLE_BOUNDS,
     Gap,
     GapKind,
     Lesson,
     LessonAction,
     RuleBook,
+    RuleBookError,
     RunLog,
     find_gaps,
     propose_candidates,
@@ -156,6 +159,29 @@ def test_rule_book_round_trip(tmp_path):
     assert RuleBook.load(path) == rules
 
 
+def test_lesson_memory_keeps_newest_per_scenario():
+    n = MAX_LESSONS_PER_SCENARIO
+    older = [lesson(False, 0.1 + i * 0.001) for i in range(n)]
+    newer = [lesson(False, 0.3 + i * 0.001) for i in range(10)]
+    other = [lesson(False, 0.2, scenario="noisy_primary")]
+    rules = RuleBook().with_lessons(older + other).with_lessons(newer)
+    reference = [x for x in rules.lessons if x.scenario == "reference"]
+    assert len(reference) == n
+    assert reference[-10:] == newer and reference[0] == older[10]  # the 10 oldest were dropped
+    assert [x for x in rules.lessons if x.scenario == "noisy_primary"] == other
+
+
+def test_rule_book_load_errors(tmp_path):
+    missing = tmp_path / "missing.json"
+    assert RuleBook.load(missing) == RuleBook()
+    with pytest.raises(RuleBookError, match="does not exist"):
+        RuleBook.load(missing, must_exist=True)
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text('{"trackers": {', encoding="utf-8")
+    with pytest.raises(RuleBookError, match="cannot read rule book .*corrupt.json"):
+        RuleBook.load(corrupt)
+
+
 def test_run_log_writes_strict_json_lines(tmp_path):
     path = tmp_path / "log.jsonl"
     log = RunLog("r1", path)
@@ -222,6 +248,8 @@ def test_closed_loop_improves_and_converges(tmp_path):
     assert accepted and all(lesson.holdout_score_after < lesson.holdout_score_before for lesson in accepted)
     # Accepted settings were checked on the held-out seeds; no setting is tried twice.
     assert any(seeds == (3, 4) for _, _, seeds in evaluator.calls)
+    # Results are cached: no (scenario, settings, seeds) combination is evaluated twice.
+    assert len(evaluator.calls) == len(set(evaluator.calls))
     tried = [c for c in (lesson.tracker for lesson in outcome.lessons) if c is not None]
     assert len({c.process_noise_m2_s3 for c in tried}) == len(tried)
     # Every planned step ran and was tracked.
@@ -260,6 +288,44 @@ def test_persistent_failure_skips_the_scenario_without_stopping_the_run():
     assert any("FAILED at research.diagnose" in line for line in outcome.report)
 
 
+def test_retried_fusion_step_records_its_lesson_once(monkeypatch):
+    real_find_gaps = agents.find_gaps
+    failed = []
+
+    def flaky_find_gaps(summary_, modes):
+        # Fail once, on the baseline-only re-diagnosis that happens after fusion is found harmful.
+        if tuple(modes) == (Mode.BASELINE,) and not failed:
+            failed.append(True)
+            raise RuntimeError("transient failure")
+        return real_find_gaps(summary_, modes)
+
+    monkeypatch.setattr(agents, "find_gaps", flaky_find_gaps)
+    log = RunLog("r")
+    outcome = Orchestrator(RuleBook(), log, Skills(evaluate=FakeEvaluator(Verdict.WORSENS))).run(task())
+    assert failed and len(log.events("step_error")) == 1
+    assert len([x for x in outcome.lessons if x.action is LessonAction.DISABLE_FUSION]) == 1
+    assert not outcome.rules.fusion_enabled("reference")
+
+
+class FailingFor(FakeEvaluator):
+    def __init__(self, bad: str) -> None:
+        super().__init__()
+        self.bad = bad
+
+    def __call__(self, scenario, tracker, seeds):
+        if scenario.name == self.bad:
+            raise RuntimeError("always fails")
+        return super().__call__(scenario, tracker, seeds)
+
+
+def test_scenario_failing_in_several_rounds_is_reported_once():
+    bad = REFERENCE.model_copy(update={"name": "bad"})
+    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=FailingFor("bad"))).run(
+        task(scenarios=(REFERENCE, bad)), rounds=4)
+    assert outcome.rounds_run >= 2  # the healthy scenario keeps the run going
+    assert [g.scenario for g in outcome.failures] == ["bad"]
+
+
 # -- real simulation, end to end ------------------------------------------------------------------
 
 
@@ -282,8 +348,35 @@ def test_cli_learn_then_compare_with_rules(tmp_path, capsys):
     assert RuleBook.load(rules).lessons
     assert log.read_text(encoding="utf-8").count("\n") >= len(PLAN)
 
-    main(["compare", "--scenario", "distant_bearing", "--seeds", "2", "--rules", str(rules)])
+    assert main(["compare", "--scenario", "distant_bearing", "--seeds", "2", "--rules", str(rules)]) == 0
     assert "learned rule book v" in capsys.readouterr().out
+
+
+def test_cli_compare_rejects_missing_or_corrupt_rule_book(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["compare", "--scenario", "reference", "--seeds", "2", "--rules", str(tmp_path / "typo.json")])
+    assert exc.value.code == 2
+    assert "does not exist" in capsys.readouterr().err
+
+    corrupt = tmp_path / "rules.json"
+    corrupt.write_text("not json", encoding="utf-8")
+    for argv in (["compare", "--seeds", "2", "--rules", str(corrupt)],
+                 ["learn", "--rules", str(corrupt), "--log", str(tmp_path / "log.jsonl")]):
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert exc.value.code == 2
+        assert "cannot read rule book" in capsys.readouterr().err
+
+
+def test_cli_learn_exits_non_zero_when_scenarios_fail(tmp_path, capsys, monkeypatch):
+    def broken(self, work, ctx):
+        raise FloatingPointError("numerical failure")
+
+    monkeypatch.setattr(agents.ResearchAgent, "diagnose", broken)
+    status = main(["learn", "--scenario", "reference", "--rounds", "1", "--train-seeds", "2", "--holdout-seeds", "2",
+                   "--rules", str(tmp_path / "rules.json"), "--log", str(tmp_path / "log.jsonl")])
+    assert status == 1
+    assert "FAILED scenarios: reference" in capsys.readouterr().err
 
 
 def test_cli_learn_rejects_overlapping_seeds(tmp_path, capsys):

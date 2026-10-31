@@ -41,6 +41,19 @@ def parse_semver(text: str) -> tuple[int, int, int]:
     return int(match[1]), int(match[2]), int(match[3])
 
 
+def parse_date(text: str, what: str) -> str:
+    """Validate a YYYY-MM-DD date and return it unchanged (ReleaseError otherwise)."""
+    # Exact format first: from Python 3.11 date.fromisoformat also accepts e.g. 20991231, which would break
+    # the string comparisons used to check release order.
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            raise ValueError
+        date.fromisoformat(text)
+    except ValueError:
+        raise ReleaseError(f"{what} {text!r} is not a valid YYYY-MM-DD date") from None
+    return text
+
+
 def read_version(root: Path) -> str:
     match = VERSION_LINE.search((root / INIT).read_text(encoding="utf-8"))
     if not match:
@@ -82,7 +95,7 @@ def parse_changelog(text: str) -> tuple[str, list[Section]]:
     for s in released:
         if s.date is None:
             raise ReleaseError(f"changelog section {s.version} has no release date")
-        date.fromisoformat(s.date)
+        parse_date(s.date, f"changelog section {s.version} date")
         current = (parse_semver(s.version), s.date)
         if previous and not (current[0] < previous[0] and current[1] <= previous[1]):
             raise ReleaseError(f"changelog section {s.version} is out of order (newest first)")
@@ -127,7 +140,7 @@ def release(new_version: str, release_date: str, root: Path = ROOT) -> None:
     current = read_version(root)
     if parse_semver(new_version) <= parse_semver(current):
         raise ReleaseError(f"new version {new_version} must be greater than {current}")
-    date.fromisoformat(release_date)
+    parse_date(release_date, "release date")
 
     changelog_path = root / CHANGELOG
     preamble, sections = parse_changelog(changelog_path.read_text(encoding="utf-8"))

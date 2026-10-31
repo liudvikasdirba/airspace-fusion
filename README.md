@@ -104,10 +104,13 @@ Learning runs use their own seeds (training 1000–1005 and held-out 2000–2005
 ```
 
 The rule book (`data/learning/rules.json`) and an append-only JSONL run log (`data/learning/log.jsonl`) live under
-the gitignored `data/` folder. Delete the rule book to start learning from scratch.
+the gitignored `data/` folder. Delete the rule book to start learning from scratch. `compare --rules` refuses a
+path that does not exist, and both commands stop with a clear error if the rule book cannot be read.
 
 Each round runs the same plan for every scenario. The orchestrator routes each step to an agent, retries a failed
-step once, logs every step, and skips a scenario that keeps failing without stopping the run:
+step once, logs every step, and skips a scenario that keeps failing without stopping the run. If any scenario
+failed, `learn` lists it on stderr and exits with status 1. Within a run, results are cached, so settings already
+scored on the same seeds are not evaluated again.
 
 | Step | Agent | What it does |
 |---|---|---|
@@ -126,7 +129,7 @@ average, and a "fusion worsens" verdict.
 
 Every tried change becomes a **lesson**, whether accepted or rejected. The learning update applies the accepted
 lessons to the rule book, re-checked against fixed bounds (process noise 0.05–5, gate 0.99–0.9999, coast 4–20 s),
-and keeps all lessons as memory. A run stops early when a round accepts nothing.
+and keeps the newest 100 lessons per scenario as memory. A run stops early when a round accepts nothing.
 
 Ground truth is used only to score settings, which is possible only in simulation. The tracker is unchanged and
 still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
@@ -281,7 +284,7 @@ Slow suite (about 3 min): Monte Carlo filter-consistency and statistical-behavio
 | Windows, Python 3.10.7 and 3.12.10 (fresh venv, README steps) | all tests pass |
 | Lowest declared dependency versions (Python 3.10) | all tests pass |
 | Install from the `requirements.txt` lock (fresh venv) | tests pass |
-| CI (`.github/workflows/tests.yml`): Ubuntu and Windows, Python 3.10/3.12, minimum versions, nightly slow suite | **not yet run** (needs a GitHub remote) |
+| CI (`.github/workflows/tests.yml`): lint, coverage, Ubuntu and Windows on Python 3.10/3.12, minimum versions, nightly slow suite | runs on push to `origin`; **not yet run** (this work has not been pushed) |
 
 `requirements.txt` is an optional pinned lock of a known-good environment:
 
