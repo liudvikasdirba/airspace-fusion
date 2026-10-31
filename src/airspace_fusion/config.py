@@ -98,14 +98,18 @@ class TrackerConfig(BaseModel):
 def with_sensor_overrides(
     base: ScenarioConfig, noise_multiplier: float = 1.0, miss_probability: float | None = None
 ) -> ScenarioConfig:
-    """Scale both sensors' noise and optionally set a common missed-observation probability."""
+    """Scale both sensors' noise and optionally set a common missed-observation probability.
+
+    The overridden sensors are re-validated (``model_copy`` alone would skip validation), so
+    out-of-range values raise ``pydantic.ValidationError`` instead of producing a silent bad run.
+    """
     sensors = {}
     for key in ("primary", "secondary"):
         sensor: SensorConfig = getattr(base, key)
         update: dict[str, object] = {"noise_std": sensor.noise_std * noise_multiplier}
         if miss_probability is not None:
             update["detection_probability"] = 1.0 - miss_probability
-        sensors[key] = sensor.model_copy(update=update)
+        sensors[key] = SensorConfig.model_validate(sensor.model_dump() | update)
     return base.model_copy(update=sensors)
 
 

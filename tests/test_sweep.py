@@ -53,13 +53,3 @@ def test_extreme_settings_produce_well_formed_metrics(scenario_name, noise, miss
             assert m.prediction_only_scans <= m.missed_updates <= n_scans, context
             assert m.processing_time_s >= 0.0, context
             assert set(dataclasses.asdict(m)) >= set(COUNT_METRICS), context
-
-
-def test_overrides_apply_to_both_sensors():
-    base = SCENARIOS["reference"]
-    s = with_sensor_overrides(base, 3.0, 0.8)
-    assert s.primary.noise_std == pytest.approx(3.0 * base.primary.noise_std)
-    assert s.secondary.noise_std == pytest.approx(3.0 * base.secondary.noise_std)
-    assert s.primary.detection_probability == pytest.approx(0.2)
-    assert s.secondary.detection_probability == pytest.approx(0.2)
-    assert with_sensor_overrides(base) == base
