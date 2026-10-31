@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e ".[dev]" pytest-cov
+      - run: python -m pip install -e ".[dev]" pytest-cov pytest-github-actions-annotate-failures==0.4.2  # failing tests become annotations, readable without signing in
       - run: python -m pytest --cov --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v4
         with:
@@ -54,7 +54,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev]" pytest-github-actions-annotate-failures==0.4.2
       - run: python -m pytest
 
   minimum-versions:
@@ -68,6 +68,7 @@ jobs:
       - run: python -m pip install tomli
       - run: python ci/minimum_constraints.py > constraints-min.txt
       - run: python -m pip install -e ".[dev]" -c constraints-min.txt
+      - run: python -m pip install pytest-github-actions-annotate-failures==0.4.2
       - run: python -m pip list
       - run: python -m pytest
       - run: python -m pytest -m slow
@@ -86,5 +87,5 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev]" pytest-github-actions-annotate-failures==0.4.2
       - run: python -m pytest -m slow

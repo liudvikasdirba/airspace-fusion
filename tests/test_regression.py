@@ -25,10 +25,35 @@ TOLERANCE = 1e-9
 NON_DETERMINISTIC = {"processing_time_s"}
 
 
+# Significant digits kept when fingerprinting simulator output. Exact float text is not portable:
+# atan2, sin, cos and log may differ in the last bit between C maths libraries (e.g. glibc vs MSVC).
+DIGEST_SIGNIFICANT_DIGITS = 10
+
+
+def canonical(value: object) -> object:
+    """JSON-friendly form of a record with floats rounded, so the digest is the same on every platform."""
+    if isinstance(value, float):
+        return f"{value:.{DIGEST_SIGNIFICANT_DIGITS}g}"
+    if isinstance(value, dict):
+        return {str(k): canonical(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [canonical(v) for v in value]
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    return repr(value)  # datetimes
+
+
 def records_digest(scenario_name: str, seed: int) -> str:
-    # repr() of floats and datetimes is exact and stable, so the digest pins every emitted value.
     records = simulate(SCENARIOS[scenario_name], seed).records
-    return hashlib.sha256(repr(records).encode("utf-8")).hexdigest()
+    text = json.dumps(canonical(records), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_digest_ignores_last_bit_differences():
+    record = {"value": (0.1 + 0.2, 1.0), "when": "t"}
+    nudged = {"value": (math.nextafter(0.1 + 0.2, 1.0), 1.0), "when": "t"}
+    assert canonical(record) == canonical(nudged)
+    assert canonical(record) != canonical({"value": (0.3001, 1.0), "when": "t"})
 
 
 def current_results() -> dict:

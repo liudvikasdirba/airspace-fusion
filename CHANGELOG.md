@@ -24,6 +24,12 @@ All notable changes to this project are recorded here. The format follows
 - Documentation set under `docs/`: index, architecture decision records, versioning policy and release
   process. Tests check that the docs' metadata, index and links stay consistent.
 
+### Fixed
+
+- The golden regression's simulator checksum rounds floats to 10 significant digits, so it no longer
+  depends on last-bit differences between C maths libraries (it failed on Linux CI while passing on Windows).
+  CI also reports failing tests as annotations, which can be read without signing in to GitHub.
+
 ## [0.1.0] - 2026-10-31
 
 First release: a simulation-only demonstrator comparing a position-only baseline tracker with position +
