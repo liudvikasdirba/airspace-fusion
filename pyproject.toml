@@ -11,11 +11,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
-    "scipy>=1.11",
+    "scipy>=1.11.1",  # 1.11.0 was yanked from PyPI
     "pydantic>=2.6",
     "stonesoup>=1.4",
     "plotly>=5.20",
-    "streamlit>=1.40",
+    "streamlit>=1.49",  # first release whose st.button accepts width=
 ]
 
 [project.optional-dependencies]

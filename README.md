@@ -63,6 +63,30 @@ Dashboard (served on http://localhost:8501, bound to localhost by `.streamlit/co
 .venv/Scripts/python -m streamlit run src/airspace_fusion/app.py
 ```
 
+## Compatibility and release checks
+
+| Check | Status |
+|---|---|
+| Windows, Python 3.10.7 and 3.12.10 (fresh venv, README steps) | all tests pass |
+| Lowest declared dependency versions (`ci/minimum_constraints.py`, Python 3.10) | all tests pass |
+| Install from `requirements.txt` lock | matches the development environment; tests pass |
+| Linux (`.github/workflows/tests.yml`: Ubuntu + Windows, Python 3.10/3.12, minimum versions, nightly slow suite) | **not yet run** - needs a GitHub remote |
+
+Test against the declared minimums locally:
+
+```bash
+python ci/minimum_constraints.py > constraints-min.txt
+```
+
+```bash
+python -m pip install -e ".[dev]" -c constraints-min.txt
+```
+
+Manual dashboard checklist (per release; the rest is covered by `tests/test_dashboard.py`): the page renders in
+light and dark themes with readable legend, visible sensors and ellipses; at about 800 px wide with the sidebar
+open the metrics table fits and the page has no horizontal scroll; tooltips show units; the server listens on
+127.0.0.1 only (`netstat -an | findstr 8501`).
+
 ## What it does
 
 | Module | Responsibility |

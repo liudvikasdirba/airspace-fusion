@@ -17,8 +17,11 @@ from airspace_fusion.schemas import MeasurementType
 # Categorical slots 1-2 of the validated reference palette; truth and observations stay neutral.
 MODE_COLORS = {Mode.BASELINE: "#2a78d6", Mode.FUSION: "#eb6834"}
 MODE_LABELS = {Mode.BASELINE: "Baseline (position sensor only)", Mode.FUSION: "Fusion (position + bearing)"}
-TRUTH_COLOR = "#52514e"
-OBS_COLOR = "#8a8984"
+# Plotly colours cannot follow the Streamlit theme, so neutrals are mid-greys that keep >= 3:1
+# contrast on both the light (white) and dark (#0e1117) backgrounds.
+TRUTH_COLOR = "#8a8984"
+OBS_COLOR = "#9d9c97"
+SENSOR_OUTLINE = "#f0efec"
 ELLIPSE_EVERY_N = 10
 
 LIMITATIONS = """
@@ -98,7 +101,8 @@ def trajectory_figure(run: SingleRun, modes: list[Mode], show_bearings: bool) ->
 
     for sensor in (scenario.primary, scenario.secondary):
         fig.add_trace(go.Scatter(x=[sensor.position_m[0]], y=[sensor.position_m[1]], mode="markers+text",
-                                 marker=dict(symbol="square", size=10, color=TRUTH_COLOR),
+                                 marker=dict(symbol="square", size=11, color=TRUTH_COLOR,
+                                             line=dict(color=SENSOR_OUTLINE, width=1.5)),
                                  text=[f"{sensor.sensor_id} ({sensor.measurement_type.value})"],
                                  textposition="bottom center", showlegend=False, hoverinfo="text"))
 
@@ -151,12 +155,12 @@ def _radius95(e: Estimate) -> float:
 
 METRIC_LABELS = {
     "position_rmse_m": "Position RMSE (m)",
-    "coverage": "Coverage (fraction of scans with a track)",
-    "containment_95": "Truth inside 95% ellipse (fraction; ~0.95 = honest)",
-    "missed_updates": "Missed primary-sensor updates (scans with a track)",
+    "coverage": "Coverage (share of scans with a track)",
+    "containment_95": "Truth inside 95% ellipse (~0.95 = honest)",
+    "missed_updates": "Missed primary-sensor updates",
     "prediction_only_scans": "Prediction-only scans (no sensor updated)",
     "rejected_observations": "Rejected observations (tracker)",
-    "invalid_observations": "Invalid records from this mode's sensors (schema)",
+    "invalid_observations": "Invalid records (this mode's sensors)",
     "track_initiations": "Track initiations",
     "processing_time_s": "Processing time (s)",
 }
@@ -204,14 +208,12 @@ def main() -> None:
         f"miss probability {1 - sim_scn.primary.detection_probability:.2f}. Both modes use the same truth and records."
     )
 
-    left, right = st.columns([1, 1])
-    with left:
-        st.plotly_chart(trajectory_figure(run, modes, show_bearings), width="stretch")
-    with right:
-        st.subheader("Metrics (this run)")
-        st.dataframe(metrics_table(run).style.format("{:.4g}"), width="stretch")
-        st.caption("Lower RMSE is better. RMSE only covers scans where a track exists - read it with coverage.")
-        st.plotly_chart(error_figure(run, modes), width="stretch")
+    # Stacked rather than side by side: the metrics table and legends need the full width on narrow windows.
+    st.plotly_chart(trajectory_figure(run, modes, show_bearings), width="stretch")
+    st.subheader("Metrics (this run)")
+    st.dataframe(metrics_table(run).style.format("{:.4g}"), width="stretch")
+    st.caption("Lower RMSE is better. RMSE only covers scans where a track exists - read it with coverage.")
+    st.plotly_chart(error_figure(run, modes), width="stretch")
 
     if compare_clicked:
         seeds = list(range(int(seed), int(seed) + int(n_seeds)))
