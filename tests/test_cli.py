@@ -1,17 +1,77 @@
+"""Command-line interface tests (L6)."""
+
+import re
+
 import pytest
 
 from airspace_fusion.cli import main
+from airspace_fusion.config import SCENARIOS
+from airspace_fusion.evaluation import METRIC_NAMES, Verdict
 
 
-@pytest.mark.parametrize("seeds", ["0", "-3"])
-def test_compare_rejects_non_positive_seed_count(seeds, capsys):
-    with pytest.raises(SystemExit) as exc:
-        main(["compare", "--seeds", seeds])
-    assert exc.value.code == 2
-    assert "must be at least 1" in capsys.readouterr().err
-
-
-def test_run_prints_metrics(capsys):
-    main(["run", "--seed", "0"])
+def run_cli(args, capsys) -> str:
+    main(args)  # returns normally on success (exit code 0)
     out = capsys.readouterr().out
-    assert "position_rmse_m" in out and "prediction_only_scans" in out
+    assert out.isascii(), "output must be plain ASCII for the Windows console"
+    return out
+
+
+def metric_rows(out: str) -> dict[str, list[str]]:
+    rows = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] in METRIC_NAMES:
+            rows.setdefault(parts[0], []).append(line)
+    return rows
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (["compare", "--seeds", "0"], "must be at least 1"),
+        (["compare", "--seeds", "-3"], "must be at least 1"),
+        (["compare", "--seeds", "two"], "invalid"),
+        (["run", "--seed", "1.5"], "invalid int value"),
+        (["run", "--scenario", "nope"], "invalid choice"),
+        (["compare", "--scenario", "nope"], "invalid choice"),
+        ([], "required"),
+        (["bogus"], "invalid choice"),
+    ],
+)
+def test_bad_arguments_exit_with_usage_error(args, message, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(args)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("scenario", list(SCENARIOS))
+def test_run_every_scenario(scenario, capsys):
+    out = run_cli(["run", "--scenario", scenario, "--seed", "3"], capsys)
+    assert out.startswith(f"scenario={scenario} seed=3 ")
+    rows = metric_rows(out)
+    assert set(rows) == set(METRIC_NAMES)
+    for name, (line,) in rows.items():
+        values = line.split()[1:]
+        assert len(values) == 2, line  # baseline, fusion
+        for v in values:
+            float(v)  # parses as a number (nan allowed)
+
+
+def test_compare_single_scenario_with_first_seed(capsys):
+    out = run_cli(["compare", "--scenario", "distant_bearing", "--seeds", "2", "--first-seed", "5"], capsys)
+    assert out.startswith("seeds 5..6 (n=2)")
+    assert out.count("== ") == 1 and "== distant_bearing:" in out
+    rows = metric_rows(out)
+    assert set(rows) == set(METRIC_NAMES)
+    for (line,) in rows.values():
+        assert len(re.findall(r"\S+ \+/- \S+", line)) == 2, line
+    verdicts = re.findall(r"^VERDICT: (.+)$", out, flags=re.MULTILINE)
+    assert len(verdicts) == 1 and verdicts[0] in {v.value for v in Verdict}
+    assert re.search(r"paired t-test p=", out)
+
+
+def test_compare_all_scenarios(capsys):
+    out = run_cli(["compare", "--seeds", "2"], capsys)
+    assert re.findall(r"^== (\w+):", out, flags=re.MULTILINE) == list(SCENARIOS)
+    assert out.count("VERDICT: ") == len(SCENARIOS)

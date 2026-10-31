@@ -22,17 +22,21 @@ python -m venv .venv
 
 ## Run
 
-Tests (fast suite, about 15 s):
+Tests (fast suite, about 25 s):
 
 ```bash
 .venv/Scripts/python -m pytest
 ```
 
-Slow suite - Monte Carlo filter-consistency checks and the edge-settings sweep (about 1.5 min):
+Slow suite - Monte Carlo filter-consistency checks, the edge-settings sweep and a cross-process
+reproducibility check (about 45 s):
 
 ```bash
 .venv/Scripts/python -m pytest -m slow
 ```
+
+The fast suite includes property-based schema fuzzing (`hypothesis`), checks of the tracker against
+textbook Kalman/EKF formulas in plain NumPy, end-to-end edge cases, module dependency rules and CLI tests.
 
 `tests/test_regression.py` compares per-seed metrics and a simulator-output checksum against
 `tests/golden/regression.json`. If a change to results is intended, regenerate it and review the JSON diff:
@@ -66,7 +70,7 @@ Dashboard (served on http://localhost:8501, bound to localhost by `.streamlit/co
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances, probability ranges. Bearings are normalised to [-π, π). `parse_records` returns invalid records with error messages. |
 | `config.py` | All scenario, sensor and tracker parameters, and four named scenarios. |
 | `simulator.py` | Deterministic truth (straight, 90° turn, straight, plus small seeded random acceleration), two stationary sensors with noise, missed observations, false observations, optional unmodelled bias, and a small fraction of deliberately corrupted records. Truth and truth-side labels are kept apart from the emitted records. |
-| `estimation.py` | Stone Soup Kalman predictor and extended Kalman updater; chi-square gating, nearest-in-gate selection per sensor, two-point initiation, coasting and track drop. Receives only validated measurements and the scan schedule. |
+| `estimation.py` | Stone Soup Kalman predictor and extended Kalman updater (bearing model with an exact analytic Jacobian); chi-square gating, nearest-in-gate selection per sensor, two-point initiation, coasting and track drop. Receives only validated measurements and the scan schedule. |
 | `evaluation.py` | Runs both modes on the *same* simulation, computes metrics against truth, aggregates multiple seeds and gives a paired verdict. |
 | `cli.py`, `app.py` | Command line and Streamlit/Plotly dashboard. |
 
@@ -93,7 +97,7 @@ an over-confident filter and for an unmodelled bearing bias, which shows up as b
 | Scenario | Baseline RMSE (m) | Fusion RMSE (m) | Change [95 % CI] | Fusion 95 % containment | Verdict |
 |---|---|---|---|---|---|
 | reference | 18.83 ± 1.7 | 16.70 ± 1.6 | −2.13 m [−2.51, −1.76], −11.3 % | 0.92 | improves |
-| noisy_primary | 49.67 ± 5.3 | 37.84 ± 5.7 | −11.83 m [−13.54, −10.12], −23.8 % | 0.91 | improves |
+| noisy_primary | 49.67 ± 5.3 | 37.83 ± 5.7 | −11.83 m [−13.54, −10.12], −23.8 % | 0.91 | improves |
 | distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
 | biased_bearing | 18.83 ± 1.7 | 37.50 ± 5.0 | +18.66 m [+16.39, +20.94], +99.1 % | 0.28 | worsens |
 

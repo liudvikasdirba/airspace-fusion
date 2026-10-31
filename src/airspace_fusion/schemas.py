@@ -27,7 +27,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 PROBABILITY_SUM_TOLERANCE = 1e-6
-SYMMETRY_TOLERANCE = 1e-9
+# Allowed asymmetry relative to the largest diagonal element (covers rounding, rejects real skew).
+SYMMETRY_RELATIVE_TOLERANCE = 1e-9
 
 
 class MeasurementType(str, Enum):
@@ -46,8 +47,12 @@ EXPECTED_UNITS: dict[MeasurementType, tuple[str, ...]] = {
 
 
 def wrap_angle(angle_rad: float) -> float:
-    """Normalise an angle to [-pi, pi)."""
-    return (angle_rad + math.pi) % (2.0 * math.pi) - math.pi
+    """Normalise an angle to [-pi, pi). Angles already in range are returned unchanged."""
+    if -math.pi <= angle_rad < math.pi:
+        return angle_rad
+    wrapped = (angle_rad + math.pi) % (2.0 * math.pi) - math.pi
+    # Rounding in the modulo can land exactly on +pi (e.g. for angles just below -pi).
+    return -math.pi if wrapped >= math.pi else wrapped
 
 
 class CovarianceUncertainty(BaseModel):
@@ -66,7 +71,8 @@ class CovarianceUncertainty(BaseModel):
             raise ValueError(f"covariance must be a non-empty square matrix, got shape {array.shape}")
         if not np.all(np.isfinite(array)):
             raise ValueError("covariance contains non-finite values")
-        if not np.allclose(array, array.T, atol=SYMMETRY_TOLERANCE, rtol=0.0):
+        scale = float(np.max(np.abs(np.diag(array))))
+        if float(np.max(np.abs(array - array.T))) > SYMMETRY_RELATIVE_TOLERANCE * scale:
             raise ValueError("covariance must be symmetric")
         try:
             np.linalg.cholesky(array)

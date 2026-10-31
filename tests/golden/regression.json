@@ -17,7 +17,7 @@
      "coverage": 0.988950276243094,
      "invalid_observations": 5,
      "missed_updates": 16,
-     "position_rmse_m": 35.918284436741594,
+     "position_rmse_m": 35.918252870216236,
      "prediction_only_scans": 5,
      "rejected_observations": 116,
      "track_initiations": 1
@@ -39,7 +39,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 7,
      "missed_updates": 13,
-     "position_rmse_m": 30.974547197426677,
+     "position_rmse_m": 30.974662416362715,
      "prediction_only_scans": 4,
      "rejected_observations": 109,
      "track_initiations": 1
@@ -61,7 +61,7 @@
      "coverage": 0.9834254143646409,
      "invalid_observations": 2,
      "missed_updates": 28,
-     "position_rmse_m": 35.56022315418685,
+     "position_rmse_m": 35.56053371135477,
      "prediction_only_scans": 7,
      "rejected_observations": 100,
      "track_initiations": 1
@@ -83,7 +83,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 6,
      "missed_updates": 17,
-     "position_rmse_m": 32.404718816136445,
+     "position_rmse_m": 32.40458265018945,
      "prediction_only_scans": 10,
      "rejected_observations": 118,
      "track_initiations": 1
@@ -105,7 +105,7 @@
      "coverage": 0.9779005524861878,
      "invalid_observations": 7,
      "missed_updates": 38,
-     "position_rmse_m": 45.79533750104618,
+     "position_rmse_m": 45.79535031609199,
      "prediction_only_scans": 6,
      "rejected_observations": 103,
      "track_initiations": 1
@@ -129,7 +129,7 @@
      "coverage": 0.988950276243094,
      "invalid_observations": 5,
      "missed_updates": 13,
-     "position_rmse_m": 18.68201087497387,
+     "position_rmse_m": 18.68200134379308,
      "prediction_only_scans": 0,
      "rejected_observations": 82,
      "track_initiations": 1
@@ -151,7 +151,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 7,
      "missed_updates": 13,
-     "position_rmse_m": 16.40791504411247,
+     "position_rmse_m": 16.40788428021694,
      "prediction_only_scans": 1,
      "rejected_observations": 74,
      "track_initiations": 1
@@ -173,7 +173,7 @@
      "coverage": 0.9834254143646409,
      "invalid_observations": 2,
      "missed_updates": 21,
-     "position_rmse_m": 18.40646803775284,
+     "position_rmse_m": 18.406501616827626,
      "prediction_only_scans": 5,
      "rejected_observations": 65,
      "track_initiations": 1
@@ -195,7 +195,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 6,
      "missed_updates": 15,
-     "position_rmse_m": 20.913605225600328,
+     "position_rmse_m": 20.913644397815318,
      "prediction_only_scans": 3,
      "rejected_observations": 80,
      "track_initiations": 1
@@ -217,7 +217,7 @@
      "coverage": 0.9779005524861878,
      "invalid_observations": 7,
      "missed_updates": 25,
-     "position_rmse_m": 18.160983924483357,
+     "position_rmse_m": 18.160950556024783,
      "prediction_only_scans": 3,
      "rejected_observations": 72,
      "track_initiations": 1
@@ -241,7 +241,7 @@
      "coverage": 0.9613259668508287,
      "invalid_observations": 5,
      "missed_updates": 13,
-     "position_rmse_m": 43.52770997280155,
+     "position_rmse_m": 43.52761076807041,
      "prediction_only_scans": 0,
      "rejected_observations": 78,
      "track_initiations": 1
@@ -263,7 +263,7 @@
      "coverage": 0.9723756906077348,
      "invalid_observations": 7,
      "missed_updates": 13,
-     "position_rmse_m": 36.308665288873186,
+     "position_rmse_m": 36.30907014815741,
      "prediction_only_scans": 1,
      "rejected_observations": 74,
      "track_initiations": 1
@@ -285,7 +285,7 @@
      "coverage": 0.9779005524861878,
      "invalid_observations": 2,
      "missed_updates": 21,
-     "position_rmse_m": 37.07809679278115,
+     "position_rmse_m": 37.07648541836143,
      "prediction_only_scans": 4,
      "rejected_observations": 65,
      "track_initiations": 1
@@ -307,7 +307,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 6,
      "missed_updates": 15,
-     "position_rmse_m": 46.78308311899103,
+     "position_rmse_m": 46.78219528017874,
      "prediction_only_scans": 3,
      "rejected_observations": 80,
      "track_initiations": 1
@@ -329,7 +329,7 @@
      "coverage": 0.9392265193370166,
      "invalid_observations": 7,
      "missed_updates": 23,
-     "position_rmse_m": 38.73817769116489,
+     "position_rmse_m": 38.73849298882424,
      "prediction_only_scans": 3,
      "rejected_observations": 65,
      "track_initiations": 1
@@ -353,7 +353,7 @@
      "coverage": 0.988950276243094,
      "invalid_observations": 5,
      "missed_updates": 13,
-     "position_rmse_m": 16.645112622869245,
+     "position_rmse_m": 16.64499006276438,
      "prediction_only_scans": 0,
      "rejected_observations": 81,
      "track_initiations": 1
@@ -375,7 +375,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 7,
      "missed_updates": 13,
-     "position_rmse_m": 14.912392350997607,
+     "position_rmse_m": 14.912345212697929,
      "prediction_only_scans": 1,
      "rejected_observations": 74,
      "track_initiations": 1
@@ -397,7 +397,7 @@
      "coverage": 0.9834254143646409,
      "invalid_observations": 2,
      "missed_updates": 21,
-     "position_rmse_m": 16.078103800451917,
+     "position_rmse_m": 16.0779450419802,
      "prediction_only_scans": 5,
      "rejected_observations": 66,
      "track_initiations": 1
@@ -419,7 +419,7 @@
      "coverage": 0.994475138121547,
      "invalid_observations": 6,
      "missed_updates": 15,
-     "position_rmse_m": 18.767542323094123,
+     "position_rmse_m": 18.76756708188535,
      "prediction_only_scans": 3,
      "rejected_observations": 80,
      "track_initiations": 1
@@ -441,7 +441,7 @@
      "coverage": 0.9779005524861878,
      "invalid_observations": 7,
      "missed_updates": 24,
-     "position_rmse_m": 16.406190273108265,
+     "position_rmse_m": 16.406283883717972,
      "prediction_only_scans": 3,
      "rejected_observations": 71,
      "track_initiations": 1
@@ -450,9 +450,9 @@
   }
  },
  "records_sha256": {
-  "biased_bearing": "e59bb46ca1c56d081b9d0944f3e99f70e16ea72bfab7cd656deeae767cfcf0da",
-  "distant_bearing": "eb40b973aeec8e146357b974d1d8c33bc87f66f8189d91fd9940f1a8c15fedd0",
-  "noisy_primary": "5fdb0ffd4d9617041be86f33b4c2ba663a7120a8521df342437d375a13da6440",
-  "reference": "c3a07ffe996694a0dd299b66fef90b5a75462cceee419cb1e134cf47f54f7108"
+  "biased_bearing": "8eacc80fd6d63f7e16bbf349607a03b93a06f2e2470c3747b345d125a88a0355",
+  "distant_bearing": "b1cd79f6c59c16f08cf7114fece22a31c48c743a66a7458d37bfc7e6c08483b9",
+  "noisy_primary": "43d4c79bb59c76454572b1f9d5d08c07d352d1ac0710a8bd940defd98d269680",
+  "reference": "d050f7f0d1885c2996ad2283df9ebe77b2be71108b03482ecdbc326e92c68048"
  }
 }

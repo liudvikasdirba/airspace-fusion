@@ -56,6 +56,28 @@ SUPPORTED_TYPES = (MeasurementType.POSITION_2D, MeasurementType.BEARING_ONLY)
 MIN_BEARING_RANGE_SIGMAS = 3.0
 
 
+class AnalyticBearingModel(Cartesian2DToBearing):
+    """``Cartesian2DToBearing`` with the exact Jacobian of ``atan2``.
+
+    Stone Soup's default Jacobian is a forward finite difference, which is off by up to
+    ~4e-4 relative for this model. A rotation offset only shifts the bearing by a
+    constant, so it does not affect the Jacobian.
+    """
+
+    def jacobian(self, state, **kwargs) -> np.ndarray:
+        x = np.asarray(state.state_vector, dtype=float).ravel()
+        offset = np.asarray(self.translation_offset, dtype=float).ravel()
+        ix, iy = self.mapping
+        dx, dy = x[ix] - offset[0], x[iy] - offset[1]
+        r2 = dx * dx + dy * dy
+        if r2 == 0.0:
+            raise FloatingPointError("bearing Jacobian undefined at the sensor position")
+        jac = np.zeros((1, self.ndim_state))
+        jac[0, ix] = -dy / r2
+        jac[0, iy] = dx / r2
+        return jac
+
+
 class Disposition:
     ACCEPTED = "accepted"
     INITIATION = "used_for_initiation"
@@ -143,7 +165,7 @@ class SingleTargetTracker:
             )
             vector = StateVector(list(m.measurement_value))
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
-            model = Cartesian2DToBearing(
+            model = AnalyticBearingModel(
                 ndim_state=4,
                 mapping=POSITION_INDICES,
                 noise_covar=np.array([[m.measurement_uncertainty.std_rad**2]]),
