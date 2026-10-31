@@ -21,13 +21,13 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from airspace_fusion.config import SCENARIOS, ScenarioConfig, TrackerConfig, default_primary, default_secondary
+from airspace_fusion.config import ScenarioConfig, TrackerConfig, default_secondary
 from airspace_fusion.evaluation import CHI2_2DOF_95, Mode, run_single
 from airspace_fusion.schemas import MeasurementType
+from helpers import ACCEL_STD_MPS2, matched_scenario, matched_tracker
 
 pytestmark = pytest.mark.slow
 
-ACCEL_STD_MPS2 = 0.3
 N_RUNS = 40
 # Two-point initiation can be delayed a few scans when noise makes the first pair imply an
 # implausible speed (> max_initiation_speed_mps); measure consistency after start-up.
@@ -41,18 +41,6 @@ class ConsistencyStats:
     nis_position: float
     nis_bearing: float
     containment_95: float
-
-
-def matched_scenario(**overrides: object) -> ScenarioConfig:
-    values: dict[str, object] = dict(
-        turn_rate_rad_s=0.0,
-        random_acceleration_std_mps2=ACCEL_STD_MPS2,
-        corrupted_record_probability=0.0,
-        primary=default_primary(detection_probability=1.0, false_observations_per_scan=0.0),
-        secondary=default_secondary(detection_probability=1.0, false_observations_per_scan=0.0),
-    )
-    values.update(overrides)
-    return SCENARIOS["reference"].model_copy(update=values)
 
 
 def consistency(scenario: ScenarioConfig, tracker: TrackerConfig, runs: int) -> dict[Mode, ConsistencyStats]:
@@ -99,7 +87,7 @@ def consistency(scenario: ScenarioConfig, tracker: TrackerConfig, runs: int) -> 
 
 @pytest.fixture(scope="module")
 def matched() -> dict[Mode, ConsistencyStats]:
-    return consistency(matched_scenario(), TrackerConfig(process_noise_m2_s3=ACCEL_STD_MPS2**2), N_RUNS)
+    return consistency(matched_scenario(), matched_tracker(), N_RUNS)
 
 
 @pytest.mark.parametrize("mode", list(Mode))
@@ -129,7 +117,7 @@ def test_containment_95(matched, mode):
 
 def test_detects_overconfident_filter():
     """Negative control: with process noise 100x too small the checks must fail."""
-    s = consistency(matched_scenario(), TrackerConfig(process_noise_m2_s3=ACCEL_STD_MPS2**2 / 100), 10)
+    s = consistency(matched_scenario(), matched_tracker(process_noise_m2_s3=ACCEL_STD_MPS2**2 / 100), 10)
     assert s[Mode.BASELINE].anees > 4.4
     assert s[Mode.BASELINE].containment_95 < 0.93
 
@@ -140,7 +128,7 @@ def test_bias_shows_in_bearing_nis():
         secondary=default_secondary(detection_probability=1.0, false_observations_per_scan=0.0,
                                     bias=math.radians(1.5))
     )
-    s = consistency(biased, TrackerConfig(process_noise_m2_s3=ACCEL_STD_MPS2**2), 10)
+    s = consistency(biased, matched_tracker(), 10)
     assert s[Mode.FUSION].nis_bearing > 1.5
     assert s[Mode.FUSION].containment_95 < 0.93
     assert 1.8 <= s[Mode.BASELINE].nis_position <= 2.1

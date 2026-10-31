@@ -90,7 +90,7 @@ class TrackerConfig(BaseModel):
     gate_probability: float = Field(default=0.997, gt=0.0, lt=1.0)
     # Two-point initiation: reject candidate pairs implying a faster speed.
     max_initiation_speed_mps: float = Field(default=60.0, gt=0.0)
-    # Drop the track after this long without an accepted update.
+    # Drop the track after this long without an accepted position update.
     max_coast_s: float = Field(default=8.0, gt=0.0)
 
 

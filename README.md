@@ -28,8 +28,8 @@ Tests (fast suite, about 25 s):
 .venv/Scripts/python -m pytest
 ```
 
-Slow suite - Monte Carlo filter-consistency checks, the edge-settings sweep and a cross-process
-reproducibility check (about 45 s):
+Slow suite - Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep,
+headless dashboard tests, performance budgets and a cross-process reproducibility check (about 3 min):
 
 ```bash
 .venv/Scripts/python -m pytest -m slow
@@ -70,7 +70,7 @@ Dashboard (served on http://localhost:8501, bound to localhost by `.streamlit/co
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances, probability ranges. Bearings are normalised to [-π, π). `parse_records` returns invalid records with error messages. |
 | `config.py` | All scenario, sensor and tracker parameters, and four named scenarios. |
 | `simulator.py` | Deterministic truth (straight, 90° turn, straight, plus small seeded random acceleration), two stationary sensors with noise, missed observations, false observations, optional unmodelled bias, and a small fraction of deliberately corrupted records. Truth and truth-side labels are kept apart from the emitted records. |
-| `estimation.py` | Stone Soup Kalman predictor and extended Kalman updater (bearing model with an exact analytic Jacobian); chi-square gating, nearest-in-gate selection per sensor, two-point initiation, coasting and track drop. Receives only validated measurements and the scan schedule. |
+| `estimation.py` | Stone Soup Kalman predictor and extended Kalman updater (bearing model with an exact analytic Jacobian); chi-square gating, nearest-in-gate selection per sensor, two-point initiation, coasting, and track drop after `max_coast_s` without a *position* update (bearings cannot keep a track alive on their own). Receives only validated measurements and the scan schedule. |
 | `evaluation.py` | Runs both modes on the *same* simulation, computes metrics against truth, aggregates multiple seeds and gives a paired verdict. |
 | `cli.py`, `app.py` | Command line and Streamlit/Plotly dashboard. |
 
@@ -99,10 +99,10 @@ an over-confident filter and for an unmodelled bearing bias, which shows up as b
 | reference | 18.83 ± 1.7 | 16.70 ± 1.6 | −2.13 m [−2.51, −1.76], −11.3 % | 0.92 | improves |
 | noisy_primary | 49.67 ± 5.3 | 37.83 ± 5.7 | −11.83 m [−13.54, −10.12], −23.8 % | 0.91 | improves |
 | distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
-| biased_bearing | 18.83 ± 1.7 | 37.50 ± 5.0 | +18.66 m [+16.39, +20.94], +99.1 % | 0.28 | worsens |
+| biased_bearing | 18.83 ± 1.7 | 37.06 ± 4.0 | +18.23 m [+16.33, +20.13], +96.8 % | 0.28 | worsens |
 
 Coverage is identical between modes (0.96–0.99). In `biased_bearing` fusion also misses more primary updates
-(25.0 vs 19.5 per run): the bias drags the estimate far enough that correct position measurements fail the gate.
+(about 25 vs 19.5 per run): the bias drags the estimate far enough that correct position measurements fail the gate.
 Run the command to reproduce.
 
 ## Limitations
@@ -110,8 +110,8 @@ Run the command to reproduce.
 - Single synthetic object, two stationary synthetic sensors, generic 2D frame. No real hardware, terrain or propagation.
 - Nearly-constant-velocity model; the turn is model mismatch absorbed by process noise (baseline 95 % containment ≈0.92, i.e. slightly over-confident).
 - Bearing updates are linearised (EKF). Information depends strongly on geometry: a distant bearing sensor adds almost nothing; a target close to the bearing sensor relative to its uncertainty is rejected as degenerate rather than processed.
-- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline (`biased_bearing`). The filter cannot detect this itself.
-- Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted; there is no multi-object association, track management beyond initiation/drop, or ambiguity resolution.
+- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline (`biased_bearing`). The filter cannot correct this itself, although it shows up as bearing NIS well above 1. The damage is not monotonic: in a bias sweep, fusion error grows up to about 2°, then falls again at 3° because the gate rejects most grossly biased bearings (see `tests/test_statistics.py`).
+- Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan), and two-point initiation can occasionally start on two aligned false observations before the real track; there is no multi-object association, track management beyond initiation/drop, or ambiguity resolution.
 - `RANGE_BEARING` and `DETECTION_ONLY` are validated by the schema but explicitly rejected by the estimator (`rejected_unsupported_type`).
 - RMSE is evaluated only where a track exists; read it together with coverage.
 - Process noise and gate settings were chosen once and are shared by both modes; they were not tuned per scenario.

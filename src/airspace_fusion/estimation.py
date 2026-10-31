@@ -19,7 +19,9 @@ Model and assumptions (deliberately simple):
   the filter's point of view: it will be over-confident.
 * Track initiation needs two position measurements on consecutive scans that
   imply a plausible speed. Bearings alone never initiate a track.
-* A track is dropped after ``max_coast_s`` without an accepted update.
+* A track is dropped after ``max_coast_s`` without an accepted *position* update.
+  Bearings refine a track but cannot confirm it: they carry no range information,
+  so on their own they could keep a diverged track alive indefinitely.
 
 This module only ever receives validated ``Measurement`` objects and the scan
 schedule. It has no access to ground truth.
@@ -265,7 +267,7 @@ class SingleTargetTracker:
             by_time[m.timestamp_utc].append(m)
 
         track: GaussianState | None = None
-        last_update: datetime | None = None
+        last_position_update: datetime | None = None
         previous_positions: list[Measurement] = []
         initiations = 0
         estimates: list[Estimate] = []
@@ -278,7 +280,11 @@ class SingleTargetTracker:
             positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
             accepted: list[Measurement] = []
 
-            if track is not None and last_update is not None and t - last_update > self.max_coast:
+            if (
+                track is not None
+                and last_position_update is not None
+                and t - last_position_update > self.max_coast
+            ):
                 track = None
 
             if track is not None:
@@ -287,8 +293,8 @@ class SingleTargetTracker:
                     state, used = self._update_with_sensor(state, group, t, dispositions, update_nis)
                     accepted.extend(used)
                 track = state if state.timestamp == t else self.predictor.predict(state, timestamp=t)
-                if accepted:
-                    last_update = t
+                if any(m.measurement_type is MeasurementType.POSITION_2D for m in accepted):
+                    last_position_update = t
             else:
                 started_track = self._initiate(previous_positions, positions)
                 if started_track is not None:
@@ -296,7 +302,7 @@ class SingleTargetTracker:
                     dispositions[a.measurement_id] = Disposition.INITIATION
                     dispositions[b.measurement_id] = Disposition.INITIATION
                     accepted.append(b)
-                    last_update = t
+                    last_position_update = t
                     initiations += 1
 
             # Only scans that contain positions replace the initiation history, so other

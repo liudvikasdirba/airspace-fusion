@@ -266,3 +266,15 @@ def test_tracker_output_independent_of_truth_values():
         assert (ea.state is None) == (eb.state is None)
         if ea.state is not None:
             np.testing.assert_array_equal(ea.state, eb.state)
+
+
+def test_bearings_alone_do_not_keep_a_track_alive():
+    # Positions stop after t=9; bearings continue. The track must drop once max_coast_s passes
+    # without a position update, even though bearings are still being accepted.
+    ms = straight_line(10) + [brg(k, (0.0, -2000.0), (100 + 10 * k, 50 + 5 * k)) for k in range(30)]
+    result = run_tracker(ms, grid(30), CFG)
+    last_position = 9
+    has_track = [e.has_track for e in result.estimates]
+    assert all(has_track[1:last_position + int(CFG.max_coast_s) + 1])
+    assert not any(has_track[last_position + int(CFG.max_coast_s) + 1:])
+    assert any("B" in e.updated_sensors for e in result.estimates[last_position + 1:])
