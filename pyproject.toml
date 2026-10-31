@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airspace-fusion"
+version = "0.1.0"
+description = "Simulation-only single-object multi-sensor tracking demonstrator (educational prototype)."
+readme = "README.md"
+# Written and tested on 3.10; 3.12+ is the intended target and is supported.
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pydantic>=2.6",
+    "stonesoup>=1.4",
+    "plotly>=5.20",
+    "streamlit>=1.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+airspace-fusion = "airspace_fusion.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:airspace_fusion", "error::RuntimeWarning:airspace_fusion"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"

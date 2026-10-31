@@ -1,0 +1,343 @@
+"""Single-object state estimation using Stone Soup Kalman components.
+
+Model and assumptions (deliberately simple):
+
+* State ``[x, vx, y, vy]`` in metres and m/s (Stone Soup ordering).
+* Nearly-constant-velocity motion: continuous white-noise acceleration with
+  intensity ``process_noise_m2_s3`` per axis. Turns are model mismatch that the
+  process noise must absorb.
+* POSITION_2D: linear Gaussian measurement model, covariance taken from the
+  measurement itself (Kalman update).
+* BEARING_ONLY: ``atan2`` measurement from the reporting sensor's position with
+  the reported angular variance, linearised by an extended Kalman update.
+  Innovations are wrapped to [-pi, pi) (Stone Soup ``Bearing`` arithmetic).
+* Exactly one object. Each sensor contributes at most one measurement per scan:
+  the in-gate candidate with the smallest normalised innovation squared (NIS).
+  This is gating plus nearest-neighbour selection, not multi-object association.
+* Measurement errors are assumed zero-mean, white and independent across
+  sensors and time. A biased or correlated sensor violates this silently from
+  the filter's point of view: it will be over-confident.
+* Track initiation needs two position measurements on consecutive scans that
+  imply a plausible speed. Bearings alone never initiate a track.
+* A track is dropped after ``max_coast_s`` without an accepted update.
+
+This module only ever receives validated ``Measurement`` objects and the scan
+schedule. It has no access to ground truth.
+"""
+
+from __future__ import annotations
+
+import time
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+
+import numpy as np
+from scipy.stats import chi2
+from stonesoup.models.measurement.linear import LinearGaussian
+from stonesoup.models.measurement.nonlinear import Cartesian2DToBearing
+from stonesoup.models.transition.linear import CombinedLinearGaussianTransitionModel, ConstantVelocity
+from stonesoup.predictor.kalman import KalmanPredictor
+from stonesoup.types.angle import Bearing
+from stonesoup.types.array import StateVector
+from stonesoup.types.detection import Detection
+from stonesoup.types.hypothesis import SingleHypothesis
+from stonesoup.types.state import GaussianState
+from stonesoup.updater.kalman import ExtendedKalmanUpdater
+
+from airspace_fusion.config import TrackerConfig
+from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
+
+POSITION_INDICES = (0, 2)
+SUPPORTED_TYPES = (MeasurementType.POSITION_2D, MeasurementType.BEARING_ONLY)
+# Bearing linearisation is unreliable when the predicted target is this close to the
+# bearing sensor relative to the position uncertainty (in standard deviations).
+MIN_BEARING_RANGE_SIGMAS = 3.0
+
+
+class Disposition:
+    ACCEPTED = "accepted"
+    INITIATION = "used_for_initiation"
+    OUTSIDE_GATE = "rejected_outside_gate"
+    NOT_SELECTED = "rejected_not_nearest_in_gate"
+    UNSUPPORTED_TYPE = "rejected_unsupported_type"
+    DEGENERATE_GEOMETRY = "rejected_degenerate_geometry"
+    DUPLICATE_ID = "rejected_duplicate_id"
+    NO_TRACK = "unused_no_track"
+
+    REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY, DUPLICATE_ID)
+
+
+@dataclass(frozen=True)
+class Estimate:
+    timestamp: datetime
+    state: np.ndarray | None  # [x, vx, y, vy], or None when no track exists
+    covariance: np.ndarray | None  # 4x4
+    updated_by: tuple[str, ...]  # measurement ids accepted at this timestamp
+
+    @property
+    def has_track(self) -> bool:
+        return self.state is not None
+
+    @property
+    def position(self) -> np.ndarray | None:
+        return None if self.state is None else self.state[list(POSITION_INDICES)]
+
+    @property
+    def position_covariance(self) -> np.ndarray | None:
+        if self.covariance is None:
+            return None
+        return self.covariance[np.ix_(POSITION_INDICES, POSITION_INDICES)]
+
+
+@dataclass
+class TrackerResult:
+    estimates: list[Estimate]
+    dispositions: dict[str, str]  # measurement_id -> Disposition
+    track_initiations: int
+    processing_time_s: float
+    disposition_counts: Counter[str] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.disposition_counts = Counter(self.dispositions.values())
+
+    @property
+    def rejected_count(self) -> int:
+        return sum(self.disposition_counts[r] for r in Disposition.REJECTED)
+
+    @property
+    def missed_updates(self) -> int:
+        """Report times at which a track existed but no measurement was accepted (prediction only)."""
+        return sum(1 for e in self.estimates if e.has_track and not e.updated_by)
+
+
+class SingleTargetTracker:
+    def __init__(self, config: TrackerConfig) -> None:
+        self.config = config
+        q = config.process_noise_m2_s3
+        self.transition_model = CombinedLinearGaussianTransitionModel([ConstantVelocity(q), ConstantVelocity(q)])
+        self.predictor = KalmanPredictor(self.transition_model)
+        self.updater = ExtendedKalmanUpdater(
+            measurement_model=None, use_joseph_cov=True, force_symmetric_covariance=True
+        )
+        self.max_coast = timedelta(seconds=config.max_coast_s)
+
+    # -- measurement models -------------------------------------------------
+
+    @staticmethod
+    def _detection(m: Measurement) -> Detection:
+        if m.measurement_type is MeasurementType.POSITION_2D:
+            model = LinearGaussian(
+                ndim_state=4, mapping=POSITION_INDICES, noise_covar=m.measurement_uncertainty.as_array()
+            )
+            vector = StateVector(list(m.measurement_value))
+        elif m.measurement_type is MeasurementType.BEARING_ONLY:
+            model = Cartesian2DToBearing(
+                ndim_state=4,
+                mapping=POSITION_INDICES,
+                noise_covar=np.array([[m.measurement_uncertainty.std_rad**2]]),
+                translation_offset=StateVector(list(m.sensor_position)),
+            )
+            vector = StateVector([Bearing(m.measurement_value[0])])
+        else:  # guarded by the caller; never reinterpret another type
+            raise ValueError(f"unsupported measurement type {m.measurement_type}")
+        return Detection(vector, timestamp=m.timestamp_utc, measurement_model=model)
+
+    def _gate_threshold(self, dof: int) -> float:
+        return float(chi2.ppf(self.config.gate_probability, dof))
+
+    def _nis(self, prior: GaussianState, m: Measurement) -> tuple[float, SingleHypothesis]:
+        detection = self._detection(m)
+        mp = self.updater.predict_measurement(prior, detection.measurement_model)
+        innovation = np.asarray(detection.state_vector, dtype=float) - np.asarray(mp.state_vector, dtype=float)
+        if m.measurement_type is MeasurementType.BEARING_ONLY:
+            innovation[0, 0] = wrap_angle(innovation[0, 0])
+        s = np.asarray(mp.covar, dtype=float)
+        nis = (innovation.T @ np.linalg.solve(s, innovation)).item()
+        if not np.isfinite(nis):
+            raise FloatingPointError(f"non-finite NIS for measurement {m.measurement_id}")
+        return nis, SingleHypothesis(prior, detection, measurement_prediction=mp)
+
+    @staticmethod
+    def _bearing_geometry_ok(prior: GaussianState, m: Measurement) -> bool:
+        pos = np.asarray(prior.state_vector, dtype=float).ravel()[list(POSITION_INDICES)]
+        rng = float(np.linalg.norm(pos - np.asarray(m.sensor_position)))
+        pos_cov = np.asarray(prior.covar, dtype=float)[np.ix_(POSITION_INDICES, POSITION_INDICES)]
+        sigma = float(np.sqrt(np.max(np.linalg.eigvalsh(pos_cov))))
+        return rng > MIN_BEARING_RANGE_SIGMAS * sigma
+
+    @staticmethod
+    def _check_state(state: GaussianState) -> None:
+        x = np.asarray(state.state_vector, dtype=float)
+        p = np.asarray(state.covar, dtype=float)
+        if not (np.all(np.isfinite(x)) and np.all(np.isfinite(p))):
+            raise FloatingPointError("non-finite state or covariance after update")
+        try:
+            np.linalg.cholesky(p)
+        except np.linalg.LinAlgError as exc:
+            raise FloatingPointError("state covariance lost positive definiteness") from exc
+
+    # -- initiation ----------------------------------------------------------
+
+    def _initiate(
+        self, previous: Sequence[Measurement], current: Sequence[Measurement]
+    ) -> tuple[GaussianState, Measurement, Measurement] | None:
+        """Two-point differencing on consecutive scans; picks the slowest plausible pair."""
+        best: tuple[float, Measurement, Measurement] | None = None
+        for a in previous:
+            for b in current:
+                dt = (b.timestamp_utc - a.timestamp_utc).total_seconds()
+                if dt <= 0.0 or dt > self.config.max_coast_s:
+                    continue
+                speed = float(np.hypot(*(np.subtract(b.measurement_value, a.measurement_value)))) / dt
+                if speed <= self.config.max_initiation_speed_mps and (best is None or speed < best[0]):
+                    best = (speed, a, b)
+        if best is None:
+            return None
+        _, a, b = best
+        dt = (b.timestamp_utc - a.timestamp_utc).total_seconds()
+        # state = A @ [z_a; z_b]; covariance propagated exactly through the linear map.
+        mapping = np.array(
+            [
+                [0.0, 0.0, 1.0, 0.0],
+                [-1.0 / dt, 0.0, 1.0 / dt, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, -1.0 / dt, 0.0, 1.0 / dt],
+            ]
+        )
+        z = np.concatenate([a.measurement_value, b.measurement_value])
+        r = np.zeros((4, 4))
+        r[:2, :2] = a.measurement_uncertainty.as_array()
+        r[2:, 2:] = b.measurement_uncertainty.as_array()
+        state = GaussianState(StateVector(mapping @ z), mapping @ r @ mapping.T, timestamp=b.timestamp_utc)
+        self._check_state(state)
+        return state, a, b
+
+    # -- main loop -------------------------------------------------------------
+
+    def run(self, measurements: Iterable[Measurement], report_times: Sequence[datetime]) -> TrackerResult:
+        started = time.perf_counter()
+        _validate_report_times(report_times)
+        report_set = set(report_times)
+
+        dispositions: dict[str, str] = {}
+        by_time: dict[datetime, list[Measurement]] = defaultdict(list)
+        for m in measurements:
+            if m.measurement_id in dispositions:
+                dispositions[m.measurement_id + "#dup"] = Disposition.DUPLICATE_ID
+                continue
+            if m.measurement_type not in SUPPORTED_TYPES:
+                dispositions[m.measurement_id] = Disposition.UNSUPPORTED_TYPE
+                continue
+            dispositions[m.measurement_id] = Disposition.NO_TRACK  # provisional
+            by_time[m.timestamp_utc].append(m)
+
+        track: GaussianState | None = None
+        last_update: datetime | None = None
+        previous_positions: list[Measurement] = []
+        initiations = 0
+        estimates: list[Estimate] = []
+
+        for t in sorted(set(by_time) | report_set):
+            scan = sorted(
+                by_time.get(t, []),
+                key=lambda m: (SUPPORTED_TYPES.index(m.measurement_type), m.sensor_id, m.measurement_id),
+            )
+            accepted: list[str] = []
+
+            if track is not None and last_update is not None and t - last_update > self.max_coast:
+                track = None
+
+            if track is not None:
+                state = track
+                for _, group in _group_by_sensor(scan):
+                    state, used = self._update_with_sensor(state, group, t, dispositions)
+                    accepted.extend(used)
+                track = state if state.timestamp == t else self.predictor.predict(state, timestamp=t)
+                if accepted:
+                    last_update = t
+            else:
+                positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
+                started_track = self._initiate(previous_positions, positions)
+                if started_track is not None:
+                    track, a, b = started_track
+                    dispositions[a.measurement_id] = Disposition.INITIATION
+                    dispositions[b.measurement_id] = Disposition.INITIATION
+                    accepted.append(b.measurement_id)
+                    last_update = t
+                    initiations += 1
+
+            if scan:
+                previous_positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
+
+            if t in report_set:
+                estimates.append(
+                    Estimate(
+                        timestamp=t,
+                        state=None if track is None else np.asarray(track.state_vector, dtype=float).ravel(),
+                        covariance=None if track is None else np.asarray(track.covar, dtype=float),
+                        updated_by=tuple(accepted),
+                    )
+                )
+
+        return TrackerResult(
+            estimates=estimates,
+            dispositions=dispositions,
+            track_initiations=initiations,
+            processing_time_s=time.perf_counter() - started,
+        )
+
+    def _update_with_sensor(
+        self, state: GaussianState, group: list[Measurement], t: datetime, dispositions: dict[str, str]
+    ) -> tuple[GaussianState, list[str]]:
+        prior = self.predictor.predict(state, timestamp=t)
+        threshold = self._gate_threshold(len(group[0].measurement_value))
+        candidates: list[tuple[float, Measurement, SingleHypothesis]] = []
+        for m in group:
+            if m.measurement_type is MeasurementType.BEARING_ONLY and not self._bearing_geometry_ok(prior, m):
+                dispositions[m.measurement_id] = Disposition.DEGENERATE_GEOMETRY
+                continue
+            nis, hypothesis = self._nis(prior, m)
+            if nis > threshold:
+                dispositions[m.measurement_id] = Disposition.OUTSIDE_GATE
+            else:
+                candidates.append((nis, m, hypothesis))
+        if not candidates:
+            return prior, []
+        candidates.sort(key=lambda c: (c[0], c[1].measurement_id))
+        _, chosen, hypothesis = candidates[0]
+        for _, m, _ in candidates[1:]:
+            dispositions[m.measurement_id] = Disposition.NOT_SELECTED
+        posterior = self.updater.update(hypothesis)
+        self._check_state(posterior)
+        dispositions[chosen.measurement_id] = Disposition.ACCEPTED
+        return posterior, [chosen.measurement_id]
+
+
+def _group_by_sensor(scan: list[Measurement]) -> list[tuple[str, list[Measurement]]]:
+    groups: dict[str, list[Measurement]] = {}
+    for m in scan:  # scan is already ordered: position sensors first, then bearing sensors
+        groups.setdefault(m.sensor_id, []).append(m)
+    return list(groups.items())
+
+
+def _validate_report_times(report_times: Sequence[datetime]) -> None:
+    for t in report_times:
+        if t.utcoffset() != timedelta(0):
+            raise ValueError("report times must be timezone-aware UTC datetimes")
+    for a, b in zip(report_times, report_times[1:]):
+        if b <= a:
+            raise ValueError("report times must be strictly increasing")
+
+
+def run_tracker(
+    measurements: Iterable[Measurement],
+    report_times: Sequence[datetime],
+    config: TrackerConfig,
+    sensor_ids: Iterable[str] | None = None,
+) -> TrackerResult:
+    """Run the tracker on the measurements from ``sensor_ids`` (all sensors if None)."""
+    allowed = None if sensor_ids is None else set(sensor_ids)
+    selected = [m for m in measurements if allowed is None or m.sensor_id in allowed]
+    return SingleTargetTracker(config).run(selected, report_times)
