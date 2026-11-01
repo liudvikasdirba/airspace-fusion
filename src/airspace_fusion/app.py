@@ -132,7 +132,9 @@ def error_figure(run: SingleRun, modes: list[Mode]) -> go.Figure:
     fig = go.Figure()
     for mode in modes:
         color = MODE_COLORS[mode]
-        t, err, bound = [], [], []
+        t: list[float] = []
+        err: list[float | None] = []  # None breaks the line where there is no track
+        bound: list[float | None] = []
         for k, e in enumerate(run.modes[mode].result.estimates):
             t.append((e.timestamp - t0).total_seconds())
             if e.has_track:

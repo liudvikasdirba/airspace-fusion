@@ -74,14 +74,14 @@ class StoneSoupTracker(SingleTargetTracker):
     def _detection(m: Measurement) -> Detection:
         if m.measurement_type is MeasurementType.POSITION_2D:
             model = LinearGaussian(
-                ndim_state=4, mapping=POSITION_INDICES, noise_covar=m.measurement_uncertainty.as_array()
+                ndim_state=4, mapping=POSITION_INDICES, noise_covar=m.covariance()
             )
             vector = StateVector(list(m.measurement_value))
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
             model = AnalyticBearingModel(
                 ndim_state=4,
                 mapping=POSITION_INDICES,
-                noise_covar=np.array([[m.measurement_uncertainty.std_rad**2]]),
+                noise_covar=np.array([[m.angular_std() ** 2]]),
                 translation_offset=StateVector(list(m.sensor_position)),
             )
             vector = StateVector([Bearing(m.measurement_value[0])])

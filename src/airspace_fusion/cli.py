@@ -10,6 +10,7 @@ from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
+from typing import NoReturn
 
 from airspace_fusion import __version__
 from airspace_fusion.agents import LearningTask, Orchestrator, Skills, describe_tracker
@@ -53,11 +54,16 @@ def _run(args: argparse.Namespace) -> None:
         print(f"{name:<24}" + "".join(f"{v:>14.4g}" for v in values))
 
 
+def _usage_error(args: argparse.Namespace, message: str) -> NoReturn:
+    parser: argparse.ArgumentParser = args.parser
+    parser.error(message)  # prints usage and exits with status 2
+
+
 def _load_rules(args: argparse.Namespace, must_exist: bool) -> RuleBook:
     try:
         return RuleBook.load(args.rules, must_exist=must_exist)
     except RuleBookError as exc:
-        args.parser.error(str(exc))
+        _usage_error(args, str(exc))
 
 
 def _compare(args: argparse.Namespace) -> None:
@@ -98,7 +104,7 @@ def _learn(args: argparse.Namespace) -> int:
             max_candidates=args.max_candidates,
         )
     except ValueError as exc:
-        args.parser.error(str(exc))
+        _usage_error(args, str(exc))
     # Microseconds keep run ids distinct when several runs start within the same second.
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     rules = _load_rules(args, must_exist=False)
