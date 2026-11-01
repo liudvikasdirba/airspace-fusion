@@ -38,3 +38,4 @@ each version.
 | [ADR 0004: Only position updates keep a track alive](adr/0004-position-updates-keep-tracks-alive.md) | accepted | Bearings refine a track but cannot keep it alive |
 | [ADR 0005: Deterministic learning agents with held-out acceptance](adr/0005-deterministic-learning-agents.md) | accepted | The learning loop uses no language model |
 | [ADR 0006: Single source for the package version](adr/0006-single-version-source.md) | accepted | `__version__` is the source; other files are checked against it |
+| [ADR 0007: NumPy tracker by default, Stone Soup as the cross-check](adr/0007-numpy-tracker-stone-soup-cross-check.md) | accepted | Filter maths in NumPy; Stone Soup must agree within 1e-9 |

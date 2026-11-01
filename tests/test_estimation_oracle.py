@@ -1,4 +1,4 @@
-"""Independent-oracle checks (E1-E2): the Stone Soup-based tracker against textbook formulas in plain NumPy."""
+"""Independent-oracle checks (E1-E2): both trackers (NumPy and Stone Soup) against textbook formulas."""
 
 from __future__ import annotations
 
@@ -8,14 +8,16 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 from stonesoup.types.array import StateVector
-from stonesoup.types.state import GaussianState, State
+from stonesoup.types.state import State
 
 from airspace_fusion.config import TrackerConfig
-from airspace_fusion.estimation import AnalyticBearingModel, Disposition, SingleTargetTracker
+from airspace_fusion.estimation import Disposition, SingleTargetTracker, TrackState
+from airspace_fusion.estimation_stonesoup import AnalyticBearingModel, StoneSoupTracker
 from airspace_fusion.schemas import Measurement, wrap_angle
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 N_CASES = 25
+TRACKERS = [SingleTargetTracker, StoneSoupTracker]
 
 
 def oracle_predict(x: np.ndarray, p: np.ndarray, dt: float, q: float) -> tuple[np.ndarray, np.ndarray]:
@@ -51,20 +53,21 @@ def measurement(**fields) -> Measurement:
     return Measurement.model_validate(base | fields)
 
 
-def run_tracker_step(x, p, dt, m, q):
-    tracker = SingleTargetTracker(TrackerConfig(process_noise_m2_s3=q, gate_probability=0.999999))
-    prior = GaussianState(StateVector(x), p, timestamp=T0)
+def run_tracker_step(tracker_class, x, p, dt, m, q):
+    tracker = tracker_class(TrackerConfig(process_noise_m2_s3=q, gate_probability=0.999999))
+    prior = TrackState(x, p, T0)
     dispositions: dict[str, str] = {}
     nis: dict[str, float] = {}
     t = T0 + timedelta(seconds=dt)
     posterior, used = tracker._update_with_sensor(prior, [m.model_copy(update={"timestamp_utc": t})], t,
                                                   dispositions, nis)
     assert used and dispositions["m"] == Disposition.ACCEPTED, dispositions
-    return np.asarray(posterior.state_vector, dtype=float).ravel(), np.asarray(posterior.covar, dtype=float), nis["m"]
+    return posterior.mean, posterior.covar, nis["m"]
 
 
+@pytest.mark.parametrize("tracker_class", TRACKERS)
 @pytest.mark.parametrize("case", range(N_CASES))
-def test_position_update_matches_textbook_kalman(case):
+def test_position_update_matches_textbook_kalman(case, tracker_class):
     """E1: one predict + position update equals the closed-form Kalman filter (Joseph form)."""
     rng = np.random.default_rng(1000 + case)
     x, p = random_prior(rng)
@@ -80,7 +83,7 @@ def test_position_update_matches_textbook_kalman(case):
 
     m = measurement(measurement_type="POSITION_2D", measurement_value=tuple(z), measurement_units=("m", "m"),
                     measurement_uncertainty={"kind": "covariance", "matrix": tuple(map(tuple, r))})
-    got_x, got_p, got_nis = run_tracker_step(x, p, dt, m, q)
+    got_x, got_p, got_nis = run_tracker_step(tracker_class, x, p, dt, m, q)
     np.testing.assert_allclose(got_x, want_x, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(got_p, want_p, rtol=1e-9, atol=1e-9)
     assert got_nis == pytest.approx(want_nis, rel=1e-9)
@@ -129,8 +132,9 @@ def bearing_case(rng: np.random.Generator, near_wrap: bool):
     return x, p, sensor
 
 
+@pytest.mark.parametrize("tracker_class", TRACKERS)
 @pytest.mark.parametrize("case", range(N_CASES))
-def test_bearing_update_matches_hand_coded_ekf(case):
+def test_bearing_update_matches_hand_coded_ekf(case, tracker_class):
     """E2: one predict + bearing update equals a hand-coded EKF (analytic Jacobian, wrapped innovation)."""
     rng = np.random.default_rng(2000 + case)
     near_wrap = case % 5 == 0  # every fifth case puts the target just below +pi, measured past -pi
@@ -150,7 +154,7 @@ def test_bearing_update_matches_hand_coded_ekf(case):
     m = measurement(measurement_type="BEARING_ONLY", measurement_value=(z,), measurement_units=("rad",),
                     measurement_uncertainty={"kind": "angular_std", "std_rad": std},
                     sensor_position=tuple(sensor))
-    got_x, got_p, got_nis = run_tracker_step(x, p, dt, m, q)
+    got_x, got_p, got_nis = run_tracker_step(tracker_class, x, p, dt, m, q)
     np.testing.assert_allclose(got_x, want_x, rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(got_p, want_p, rtol=1e-9, atol=1e-9)
     assert got_nis == pytest.approx(want_nis, rel=1e-9)

@@ -82,7 +82,7 @@ One seeded simulation, both modes:
 .venv/Scripts/python -m airspace_fusion.cli run --scenario reference --seed 0
 ```
 
-Multi-seed comparison over all scenarios (about 15 s for 20 seeds, 2 minutes for 200). Use `--scenario NAME` for
+Multi-seed comparison over all scenarios (about 6 s for 20 seeds, 30 s for 200, 2 minutes for 1000). Use `--scenario NAME` for
 one scenario and `--first-seed N` to start from a different seed:
 
 ```bash
@@ -140,7 +140,7 @@ Ground truth is used only to score settings, which is possible only in simulatio
 still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
 always give the same result.
 
-Result of `learn --rounds 3` from an empty rule book (about 30 s with 4 workers; converges after round 2), checked on seeds 0–19:
+Result of `learn --rounds 3` from an empty rule book (about 10 s; converges after round 2), checked on seeds 0–19:
 
 | Scenario | Learned settings | Baseline RMSE (m) | Fusion RMSE (m) | Baseline 95 % containment |
 |---|---|---|---|---|
@@ -187,7 +187,8 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances (symmetry relative to matrix scale) and probability ranges. Bearings are normalised to [−π, π). `parse_records` returns invalid records with their errors. |
 | `config.py` | All scenario, sensor and tracker parameters, and the four scenarios. |
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
-| `estimation.py` | Single-target tracker built on Stone Soup (Kalman predictor, extended Kalman updater; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
+| `estimation.py` | Single-target tracker: Kalman/extended Kalman filter in plain NumPy (Joseph-form update; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
+| `estimation_stonesoup.py` | The same tracker with the filter steps done by Stone Soup, kept as a cross-check: tests require both to give the same results ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)). |
 | `evaluation.py` | Runs both modes on the same simulation, computes metrics against truth, aggregates seeds and gives a paired verdict. |
 | `learning.py` | Learning loop: score, gaps, lessons, the bounded rule book (JSON) and the JSONL run log. |
 | `agents.py` | Orchestrator and the research, experiment, QA and content agents that run the learning plan. |

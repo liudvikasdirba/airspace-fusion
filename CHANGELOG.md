@@ -21,6 +21,9 @@ All notable changes to this project are recorded here. The format follows
   `processing_time_s` differs. Comparisons of fewer than 4 seeds run serially, because starting workers
   would cost more than it saves. If a worker stops unexpectedly (usually from running out of memory), the
   command says so and exits with status 1. In code: `compare_modes(..., executor)` and `seed_executor`.
+- `estimation_stonesoup.StoneSoupTracker`: the tracker with its filter steps done by Stone Soup, kept as a
+  cross-check. Tests require it and the NumPy tracker to make the same decision about every measurement and to
+  agree within 1e-9 ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)).
 - `airspace-fusion --version`.
 - Versioning: the package version is defined once, in `airspace_fusion.__version__`. `ci/release.py`
   checks that `CITATION.cff` and this changelog agree with it and cuts releases.
@@ -30,6 +33,13 @@ All notable changes to this project are recorded here. The format follows
   process. Tests check that the docs' metadata, index and links stay consistent.
 - [Roadmap to April 2027](docs/roadmap.md) (draft): the November 2026 audit findings and nine milestones
   from 0.2.0 to 1.0.0, with dates, deliverables and exit criteria.
+
+### Changed
+
+- The tracker's filter steps (predict, innovation, Joseph-form update) are written directly in NumPy instead of
+  going through Stone Soup. Results are unchanged (the golden regression passes as before); one run takes about
+  60 ms instead of 330 ms. `SingleTargetTracker` internals now use `TrackState` instead of Stone Soup's
+  `GaussianState`, and `AnalyticBearingModel` moved to `estimation_stonesoup`. Performance budgets are tightened.
 
 ### Fixed
 

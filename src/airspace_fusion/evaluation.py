@@ -200,7 +200,7 @@ def seed_executor(workers: int, seeds_per_comparison: int) -> Iterator[Executor 
     """A process pool for ``compare_modes``, or None when running serially is cheaper.
 
     Create it once per command and pass it to every comparison: starting the worker processes takes
-    about a second, because each one imports NumPy, SciPy and Stone Soup.
+    a moment, because each one imports NumPy, SciPy and pydantic.
     """
     if workers < 2 or seeds_per_comparison < MIN_PARALLEL_SEEDS:
         yield None
