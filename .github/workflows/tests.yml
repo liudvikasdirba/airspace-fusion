@@ -29,7 +29,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e . mypy==2.4.1  # pinned: new mypy releases find new errors
+      # Pinned mypy, and dependencies from the lock: new releases of either change what mypy reports.
+      - run: python -m pip install -e . mypy==2.4.1 -c requirements.txt
       - run: python -m mypy  # settings in pyproject.toml
 
   coverage:

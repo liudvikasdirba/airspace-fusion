@@ -189,12 +189,15 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Simulation")
-        scenario_name = st.selectbox("Scenario", list(SCENARIOS), index=list(SCENARIOS).index(DEFAULT_SCENARIO))
+        # With an index set these widgets always return an option; newer Streamlit types still allow None.
+        scenario_name = (
+            st.selectbox("Scenario", list(SCENARIOS), index=list(SCENARIOS).index(DEFAULT_SCENARIO)) or DEFAULT_SCENARIO
+        )
         st.caption(SCENARIOS[scenario_name].description)
         seed = st.number_input("Random seed", min_value=0, max_value=1_000_000, value=0, step=1)
         noise = st.slider("Noise multiplier (both sensors)", 0.25, 3.0, 1.0, 0.25)
         miss = st.slider("Missed-observation probability (both sensors)", 0.0, 0.8, 0.1, 0.05)
-        view = st.radio("Show", ["Both", "Baseline only", "Fusion only"], horizontal=True)
+        view = st.radio("Show", ["Both", "Baseline only", "Fusion only"], horizontal=True) or "Both"
         show_bearings = st.checkbox("Show bearing rays", value=True)
         run_clicked = st.button("Run simulation", type="primary", width="stretch")
         st.divider()
