@@ -8,6 +8,13 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: the [roadmap](docs/roadmap.md) records progress (M0 done, most of M1 done in 0.2.0, with
+  notes where results differ from the plan); the [release process](docs/releasing.md) describes the pull
+  request, tag and GitHub release steps actually used; the README has current test times and the lint and type
+  check commands.
+
 ## [0.2.0] - 2026-11-01
 
 Fast evaluation and a learning loop: seeds run in parallel, the tracker's filter maths runs in NumPy with
