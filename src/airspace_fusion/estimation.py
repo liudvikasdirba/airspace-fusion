@@ -79,8 +79,7 @@ class Innovation:
     jacobian: np.ndarray  # H, measurement dimension x 4
     noise: np.ndarray  # R
     cross_covar: np.ndarray  # P H^T
-    covar: np.ndarray  # S = H P H^T + R
-    covar_inverse: np.ndarray
+    covar_inverse: np.ndarray  # S^-1, with S = H P H^T + R
 
     @property
     def nis(self) -> float:
@@ -219,8 +218,7 @@ class SingleTargetTracker:
         else:  # guarded by the caller; never reinterpret another type
             raise ValueError(f"unsupported measurement type {m.measurement_type}")
         cross_covar = prior.covar @ jacobian.T
-        covar = jacobian @ cross_covar + noise
-        return Innovation(vector, jacobian, noise, cross_covar, covar, small_inverse(covar))
+        return Innovation(vector, jacobian, noise, cross_covar, small_inverse(jacobian @ cross_covar + noise))
 
     def _nis(self, prior: TrackState, m: Measurement) -> tuple[float, object]:
         """NIS of ``m`` against ``prior``, plus whatever ``_update`` needs to apply it."""

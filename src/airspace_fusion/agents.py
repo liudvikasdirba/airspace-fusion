@@ -21,6 +21,7 @@ rule book always give the same result.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -337,6 +338,8 @@ class Orchestrator:
         for attempt in range(1 + self.max_retries):
             try:
                 action(work, ctx)
+            except BrokenProcessPool:
+                raise  # the worker pool is gone: every later step would fail too, so stop the whole run
             except Exception as exc:  # recorded and retried; a scenario that keeps failing is skipped, not fatal
                 self.log.record("step_error", scenario=work.name, step=f"{agent_name}.{step}", attempt=attempt,
                                 error=repr(exc))

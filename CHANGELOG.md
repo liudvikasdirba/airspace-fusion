@@ -8,8 +8,24 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `learn` now stops with the "worker process stopped unexpectedly" error when a worker dies. Before, the learning
+  loop retried every step against the broken worker pool and reported every scenario as failed, without the
+  advice to use fewer `--workers`.
+- `--workers` above 61 no longer crashes on Windows, where Python allows at most 61 worker processes; the
+  number is capped.
+- Ctrl-C during a parallel `compare` or `learn` drops the queued seeds instead of waiting for them, and exits
+  with status 130 and the message "interrupted".
+- The default number of workers counts the CPUs the process may use (its CPU affinity, for example a
+  container's cpuset), not every CPU in the machine.
+
 ### Changed
 
+- Parallel runs send seeds to workers in batches, so the scenario and tracker settings are not pickled once
+  per seed.
+- Performance budgets allow about six times the development machine's timings (was four), to avoid failures
+  on busy CI runners.
 - Documentation: the [roadmap](docs/roadmap.md) records progress (M0 done, most of M1 done in 0.2.0, with
   notes where results differ from the plan); the [release process](docs/releasing.md) describes the pull
   request, tag and GitHub release steps actually used; the README has current test times and the lint and type
