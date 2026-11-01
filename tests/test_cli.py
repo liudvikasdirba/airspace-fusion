@@ -96,6 +96,31 @@ def test_crashed_worker_gives_clear_error(monkeypatch, capsys):
     assert "worker process stopped unexpectedly" in err and "--workers 1" in err
 
 
+def test_crashed_worker_during_learn_gives_clear_error(monkeypatch, tmp_path, capsys):
+    """The orchestrator retries failing steps, but a broken worker pool must stop the run with the same advice."""
+    def broken(*args, **kwargs):
+        raise BrokenProcessPool("a child process terminated abruptly")
+
+    monkeypatch.setattr(cli, "compare_modes", broken)
+    paths = ["--rules", str(tmp_path / "rules.json"), "--log", str(tmp_path / "log.jsonl")]
+    assert main(["learn", "--scenario", "reference", *paths]) == 1
+    err = capsys.readouterr().err
+    assert "worker process stopped unexpectedly" in err and "--workers 1" in err
+
+
+def test_interrupt_exits_with_status_130(monkeypatch, capsys):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "compare_modes", interrupted)
+    assert main(["compare", "--scenario", "reference", "--seeds", "2"]) == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_default_workers_fit_the_usable_cpus():
+    assert 1 <= cli.DEFAULT_WORKERS <= min(cli._usable_cpus(), 4)
+
+
 def test_compare_all_scenarios(capsys):
     out = run_cli(["compare", "--seeds", "2"], capsys)
     assert re.findall(r"^== (\w+):", out, flags=re.MULTILINE) == list(SCENARIOS)

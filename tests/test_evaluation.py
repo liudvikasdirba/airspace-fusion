@@ -1,10 +1,13 @@
+import concurrent.futures
 import math
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
 
+import airspace_fusion.evaluation as evaluation
 from airspace_fusion.config import SCENARIOS, TrackerConfig
 from airspace_fusion.estimation import Disposition, Estimate, TrackerResult
 from airspace_fusion.evaluation import (
@@ -137,7 +140,9 @@ def without_timing(summary):
     return {mode: {k: v for k, v in m.items() if k != "processing_time_s"} for mode, m in summary.metrics.items()}
 
 
-def test_parallel_comparison_matches_serial():
+@pytest.mark.parametrize("batches", [64, 2])  # 2 batches: several seeds per task
+def test_parallel_comparison_matches_serial(batches, monkeypatch):
+    monkeypatch.setattr(evaluation, "PARALLEL_BATCHES", batches)
     scenario = SCENARIOS["biased_bearing"].model_copy(update={"duration_s": 40.0})
     seeds = range(3, 3 + MIN_PARALLEL_SEEDS + 1)
     serial = compare_modes(scenario, TrackerConfig(), seeds)
@@ -155,6 +160,23 @@ def test_parallel_comparison_matches_serial():
 def test_seed_executor_runs_serially_when_parallel_does_not_pay(workers, seeds):
     with seed_executor(workers, seeds) as executor:
         assert executor is None
+
+
+def test_seed_executor_respects_the_platform_worker_limit(monkeypatch):
+    monkeypatch.setattr(evaluation, "MAX_WORKERS", 2)
+    with seed_executor(64, 100) as executor:
+        assert executor is not None and executor._max_workers == 2
+
+
+def test_interrupted_seed_executor_drops_queued_work():
+    started = time.perf_counter()
+    with pytest.raises(KeyboardInterrupt), seed_executor(2, MIN_PARALLEL_SEEDS) as executor:
+        assert executor is not None
+        futures = [executor.submit(time.sleep, 0.5) for _ in range(40)]  # about 10 s of work for 2 workers
+        raise KeyboardInterrupt
+    assert time.perf_counter() - started < 5.0  # did not wait for the queued seeds
+    concurrent.futures.wait(futures, timeout=10)  # the pool cancels in its own thread
+    assert sum(f.cancelled() for f in futures) >= 30
 
 
 def test_disposition_counts_are_derived():

@@ -27,9 +27,22 @@ from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
 
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
-# Each worker holds its own NumPy/SciPy/Stone Soup (about 100 MB). Beyond 4, gains are small and starting
+
+
+def _usable_cpus() -> int:
+    """CPUs this process may run on (its CPU affinity, e.g. a container's cpuset), not all CPUs in the machine."""
+    process_cpu_count = getattr(os, "process_cpu_count", None)  # Python 3.13+
+    if process_cpu_count is not None:
+        return process_cpu_count() or 1
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)  # Linux
+    if sched_getaffinity is not None:
+        return len(sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
+# Each worker holds its own NumPy/SciPy/pydantic (about 100 MB). Beyond 4, gains are small and starting
 # many workers at once ran an 8 GB machine out of memory, so more must be asked for explicitly.
-DEFAULT_WORKERS = min(os.cpu_count() or 1, 4)
+DEFAULT_WORKERS = min(_usable_cpus(), 4)
 WORKERS_HELP = (
     f"processes that evaluate seeds in parallel (default: {DEFAULT_WORKERS}; 1 runs serially). "
     f"Fewer than {MIN_PARALLEL_SEEDS} seeds per comparison always run serially."
@@ -164,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
         print("error: a worker process stopped unexpectedly, usually because the machine ran out of memory. "
               "Run again with fewer --workers, or --workers 1.", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130  # the conventional status for Ctrl-C
 
 
 if __name__ == "__main__":

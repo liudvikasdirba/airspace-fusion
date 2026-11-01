@@ -7,6 +7,7 @@ Every number is computed from an actual simulation run.
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from contextlib import contextmanager
@@ -29,6 +30,11 @@ MATERIAL_RELATIVE_CHANGE = 0.05
 SIGNIFICANCE_LEVEL = 0.05
 # Below this many seeds per comparison, starting worker processes costs more than it saves.
 MIN_PARALLEL_SEEDS = 4
+# Seeds per comparison are sent to workers in about this many batches: few enough that the scenario and
+# tracker are not pickled once per seed, enough to keep every worker busy until the end.
+PARALLEL_BATCHES = 64
+# ProcessPoolExecutor refuses more workers than this on Windows.
+MAX_WORKERS = 61 if sys.platform == "win32" else None
 
 
 class Mode(str, Enum):
@@ -205,8 +211,15 @@ def seed_executor(workers: int, seeds_per_comparison: int) -> Iterator[Executor 
     if workers < 2 or seeds_per_comparison < MIN_PARALLEL_SEEDS:
         yield None
         return
-    with ProcessPoolExecutor(max_workers=min(workers, seeds_per_comparison)) as executor:
+    workers = min(workers, seeds_per_comparison, MAX_WORKERS or workers)
+    executor = ProcessPoolExecutor(max_workers=workers)
+    try:
         yield executor
+    except BaseException:
+        # Interrupted or failed: drop queued seeds instead of waiting for them, then re-raise.
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    executor.shutdown(wait=True)
 
 
 def compare_modes(
@@ -221,7 +234,8 @@ def compare_modes(
     if executor is None:
         per_seed = [seed_metrics(scenario, tracker, seed) for seed in seeds]
     else:
-        per_seed = list(executor.map(seed_metrics, repeat(scenario), repeat(tracker), seeds))
+        chunksize = max(1, len(seeds) // PARALLEL_BATCHES)
+        per_seed = list(executor.map(seed_metrics, repeat(scenario), repeat(tracker), seeds, chunksize=chunksize))
     per_mode = {mode: [metrics[mode] for metrics in per_seed] for mode in Mode}
     metrics = {
         mode: {name: summarise([float(getattr(m, name)) for m in runs]) for name in METRIC_NAMES}
