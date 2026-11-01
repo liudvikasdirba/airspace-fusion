@@ -23,6 +23,8 @@ All notable changes to this project are recorded here. The format follows
   in an unknown format fails to load instead of being misread.
 - Documentation set under `docs/`: index, architecture decision records, versioning policy and release
   process. Tests check that the docs' metadata, index and links stay consistent.
+- [Roadmap to April 2027](docs/roadmap.md) (draft): the November 2026 audit findings and nine milestones
+  from 0.2.0 to 1.0.0, with dates, deliverables and exit criteria.
 
 ### Fixed
 

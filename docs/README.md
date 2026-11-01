@@ -1,7 +1,7 @@
 ---
 title: Documentation index
 status: accepted
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Documentation index
@@ -31,6 +31,7 @@ each version.
 |---|---|---|
 | [Versioning policy](versioning.md) | accepted | What each version number means and where versions are recorded |
 | [Release process](releasing.md) | accepted | Steps to cut, check and tag a release |
+| [Roadmap to April 2027](roadmap.md) | draft | November 2026 audit and the milestones to 1.0.0 |
 | [ADR 0001: Record architecture decisions](adr/0001-record-architecture-decisions.md) | accepted | Why and how decisions are recorded |
 | [ADR 0002: Simulation-only scope](adr/0002-simulation-only-scope.md) | accepted | No real sensors, feeds or hardware |
 | [ADR 0003: Keep ground truth away from the tracker](adr/0003-ground-truth-isolation.md) | accepted | Truth and tracker output meet only in evaluation |
