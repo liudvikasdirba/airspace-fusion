@@ -8,6 +8,11 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
+Fast evaluation and a learning loop: seeds run in parallel, the tracker's filter maths runs in NumPy with
+Stone Soup as a cross-check (about 5x faster per run, same results), and the package is type-checked in CI.
+
 ### Added
 
 - `learn` command: a closed learning loop in which research, experiment, QA and content agents tune the
@@ -28,6 +33,7 @@ All notable changes to this project are recorded here. The format follows
 - Type checking: mypy runs over the package in CI (new `types` job, mypy pinned) and passes. Only the untyped
   third-party packages (SciPy, Stone Soup, Plotly, pandas) are exempt from import checks; settings are in
   `pyproject.toml`.
+- CI tests Python 3.13 on Ubuntu and Windows as a required target (it was an experimental Ubuntu-only job).
 - `Measurement.covariance()` and `Measurement.angular_std()` return the uncertainty in the form the tracker
   needs and raise `ValueError` if the measurement carries the other kind.
 - Versioning: the package version is defined once, in `airspace_fusion.__version__`. `ci/release.py`

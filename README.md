@@ -13,7 +13,7 @@ models no real hardware.
 
 ## Quick start
 
-Requires Python 3.10+ (3.12+ recommended; tested on 3.10.7 and 3.12.10). From the repository root:
+Requires Python 3.10+ (3.12+ recommended; tested on 3.10.7 and 3.12.10, and in CI on 3.10, 3.12 and 3.13). From the repository root:
 
 ```bash
 python -m venv .venv
@@ -290,7 +290,7 @@ Slow suite (about 3 min): Monte Carlo filter-consistency and statistical-behavio
 | Windows, Python 3.10.7 and 3.12.10 (fresh venv, README steps) | all tests pass |
 | Lowest declared dependency versions (Python 3.10) | all tests pass |
 | Install from the `requirements.txt` lock (fresh venv) | tests pass |
-| CI (`.github/workflows/tests.yml`): lint, coverage, Ubuntu and Windows on Python 3.10/3.12, minimum versions, nightly slow suite | runs on every push and pull request; all jobs pass |
+| CI (`.github/workflows/tests.yml`): lint, type check, coverage, Ubuntu and Windows on Python 3.10/3.12/3.13, minimum versions, nightly slow suite | runs on every push and pull request; all jobs pass |
 
 `requirements.txt` is an optional pinned lock of a known-good environment:
 
