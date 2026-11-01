@@ -260,9 +260,10 @@ See `tests/test_consistency.py`. Negative controls confirm the checks fail for a
 
 ## Development and testing
 
-Fast suite (about 25 s). It includes:
+Fast suite (about 20 s). It includes:
 - property-based schema fuzzing (`hypothesis`)
-- checks of the tracker against textbook Kalman/EKF formulas written in plain NumPy
+- checks of both trackers (NumPy and Stone Soup) against textbook Kalman/EKF formulas, and of the two against
+  each other
 - end-to-end edge cases and module dependency rules
 - CLI tests
 - the golden regression
@@ -271,10 +272,24 @@ Fast suite (about 25 s). It includes:
 .venv/Scripts/python -m pytest
 ```
 
-Slow suite (about 3 min): Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep, headless dashboard tests, performance budgets, and a cross-process reproducibility check.
+Slow suite (about 1 min): Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep, headless dashboard tests, performance budgets, and a cross-process reproducibility check.
 
 ```bash
 .venv/Scripts/python -m pytest -m slow
+```
+
+Lint and type checks, as CI runs them (the versions are pinned in `.github/workflows/tests.yml`):
+
+```bash
+.venv/Scripts/python -m pip install ruff==0.17.3 mypy==2.4.1
+```
+
+```bash
+.venv/Scripts/python -m ruff check .
+```
+
+```bash
+.venv/Scripts/python -m mypy
 ```
 
 `tests/test_regression.py` compares per-seed metrics and a simulator-output checksum against `tests/golden/regression.json`. If a change to results is intended, regenerate it and review the JSON diff with the code change:
@@ -322,8 +337,8 @@ Manual dashboard checklist, per release (everything else is covered by `tests/te
 
 - [CHANGELOG.md](CHANGELOG.md): what changed in each version, with upcoming changes under Unreleased.
 - [docs/](docs/README.md): an index of the project documents, including the
-  [versioning policy](docs/versioning.md), the [release process](docs/releasing.md) and the architecture
-  decision records in [docs/adr/](docs/adr/).
+  [roadmap to April 2027](docs/roadmap.md) with what is done so far, the [versioning policy](docs/versioning.md),
+  the [release process](docs/releasing.md) and the architecture decision records in [docs/adr/](docs/adr/).
 - The version is defined in `src/airspace_fusion/__init__.py`. Print it with `airspace-fusion --version`, and
   check that `CITATION.cff` and the changelog agree with it:
 

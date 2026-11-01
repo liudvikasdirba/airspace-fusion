@@ -30,8 +30,8 @@ each version.
 | Document | Status | Summary |
 |---|---|---|
 | [Versioning policy](versioning.md) | accepted | What each version number means and where versions are recorded |
-| [Release process](releasing.md) | accepted | Steps to cut, check and tag a release |
-| [Roadmap to April 2027](roadmap.md) | draft | November 2026 audit and the milestones to 1.0.0 |
+| [Release process](releasing.md) | accepted | Steps to cut, check, tag and publish a release |
+| [Roadmap to April 2027](roadmap.md) | draft | November 2026 audit, the milestones to 1.0.0 and progress on them |
 | [ADR 0001: Record architecture decisions](adr/0001-record-architecture-decisions.md) | accepted | Why and how decisions are recorded |
 | [ADR 0002: Simulation-only scope](adr/0002-simulation-only-scope.md) | accepted | No real sensors, feeds or hardware |
 | [ADR 0003: Keep ground truth away from the tracker](adr/0003-ground-truth-isolation.md) | accepted | Truth and tracker output meet only in evaluation |

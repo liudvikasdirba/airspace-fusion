@@ -10,19 +10,29 @@ This document records the November 2026 audit of the project and the plan that f
 milestones from November 2026 to the 1.0.0 release at the end of April 2027. It is a `draft`: a plan, not a
 commitment. Review it at every release and update the dates and the `updated` field when the plan changes.
 
-## Where the project stands (1 November 2026)
+## Progress
 
-| Measure | Value |
+Finished deliverables and exit criteria are ticked below, with a note where the result differs from the plan.
+
+| Milestone | Status (1 November 2026) |
 |---|---|
-| Source / tests | about 2,200 lines in `src/`, about 2,600 lines in `tests/` |
-| Fast suite | 249 tests, all passing, about 30 s on Windows / Python 3.12 |
-| Lint | ruff clean |
-| Cost of one run (`run_single`, both modes) | about 0.33 s |
-| `compare --seeds 20` (all scenarios) | about 45 s |
-| Scenarios | 4, all sharing one trajectory and one sensor geometry |
-| Package version | 0.1.0, with the learning loop and docs under Unreleased |
-| `main` branch | only "Initial project structure"; all work is on `chore/repo-hygiene` |
-| Git tags | none |
+| M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
+| M1 Fast and parallel | **Mostly done early**, shipped in 0.2.0. Open: the per-seed benchmark test, and the two speed targets (one run takes about 60 ms, not under 17 ms; 1,000 seeds take 117 s, not under 60 s). |
+| M2 – M8 | Not started. |
+
+## Where the project stands
+
+| Measure | At the audit (1 Nov 2026, morning) | After 0.2.0 (1 Nov 2026) |
+|---|---|---|
+| Source / tests | about 2,200 lines in `src/`, about 2,600 lines in `tests/` | about 2,470 and 2,800 lines |
+| Fast suite | 249 tests, all passing, about 30 s on Windows / Python 3.12 | 323 tests, about 21 s; slow suite 65 tests, about 60 s |
+| Lint and types | ruff clean; no type checking | ruff and mypy clean, both in CI |
+| Cost of one run (`run_single`, both modes) | about 0.33 s | about 60 ms |
+| `compare --seeds 20` (all scenarios) | about 45 s | about 6 s (4 workers) |
+| Scenarios | 4, all sharing one trajectory and one sensor geometry | unchanged |
+| Package version | 0.1.0, with the learning loop and docs under Unreleased | 0.2.0 |
+| `main` branch | only "Initial project structure"; all work is on `chore/repo-hygiene` | all work merged (pull requests 1 – 4) |
+| Git tags | none | `v0.1.0`, `v0.2.0` (with a GitHub release) |
 
 ### Strengths to keep
 
@@ -35,20 +45,20 @@ commitment. Review it at every release and update the dates and the `updated` fi
 
 ### Audit findings
 
-Ordered by importance. Each one is addressed by the milestone named in the last column.
+Ordered by importance. Each one is addressed by the milestone named in the fourth column.
 
-| # | Finding | Effect | Milestone |
-|---|---|---|---|
-| 1 | No work is on `main`, there are no tags, and the README says CI has "not yet run". | The project has not actually shipped. | M0 |
-| 2 | One run costs about 0.33 s, about 1 ms per sensor update, almost all of it Stone Soup wrapper overhead (about 13,000 `__array_ufunc__` calls per run). Seeds run one after another. | Verdicts rest on 20 seeds and learning on 6+6 seeds and 4 candidates. | M1 |
-| 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 |
-| 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 |
-| 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 |
-| 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 |
-| 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 |
-| 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 |
-| 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 |
-| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 |
+| # | Finding | Effect | Milestone | Status |
+|---|---|---|---|---|
+| 1 | No work is on `main`, there are no tags, and the README says CI has "not yet run". | The project has not actually shipped. | M0 | ✅ Resolved in 0.2.0 |
+| 2 | One run costs about 0.33 s, about 1 ms per sensor update, almost all of it Stone Soup wrapper overhead (about 13,000 `__array_ufunc__` calls per run). Seeds run one after another. | Verdicts rest on 20 seeds and learning on 6+6 seeds and 4 candidates. | M1 | Partly: about 5× faster per run and seeds run in parallel (0.2.0) |
+| 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 | Open |
+| 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | Open |
+| 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | Open |
+| 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Open |
+| 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Open |
+| 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 | Open |
+| 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 | Open |
+| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 done (0.2.0); scenario files and provenance open |
 
 ## Ambition
 
@@ -95,42 +105,62 @@ over many geometries. M3 must land before M5–M7, so that their results are jud
 M5 comes before M6 (bias estimation is triggered by the monitor) and M7 (the monitor's statistics are the
 learning features). M8 needs all of them.
 
-## M0 — Ship what exists (0.2.0, 2 – 8 Nov 2026)
+## M0 — Ship what exists (0.2.0, 2 – 8 Nov 2026) — done 1 Nov 2026
 
 **Goal:** the current work is on `main`, released, tagged and tested by CI.
 
 Deliverables:
-- Open a pull request from `chore/repo-hygiene` to `main`; fix whatever CI finds on Ubuntu and Windows.
-- Tag `v0.1.0` on the commit that matches the 0.1.0 changelog entry (`e7ed74d`, "Add lint and coverage CI
+- [x] Open a pull request from `chore/repo-hygiene` to `main`; fix whatever CI finds on Ubuntu and Windows.
+  *Merged as pull request 1. CI found one failure: the golden checksum depended on last-bit differences between
+  C maths libraries; it now rounds to 10 significant digits.*
+- [x] Tag `v0.1.0` on the commit that matches the 0.1.0 changelog entry (`e7ed74d`, "Add lint and coverage CI
   jobs and CITATION.cff"; confirm before tagging).
-- Release 0.2.0 from the Unreleased entries (learning loop, `--version`, docs) with `ci/release.py`, and tag it.
-- Replace the README's "not yet run" CI line with the real status.
-- Add mypy (strict for `src/`) to the lint job; make Python 3.13 a required CI target.
-- Add this roadmap to the docs index.
+- [x] Release 0.2.0 from the Unreleased entries (learning loop, `--version`, docs) with `ci/release.py`, and tag it.
+  *Also published as a GitHub release. 0.2.0 includes most of M1 as well.*
+- [x] Replace the README's "not yet run" CI line with the real status.
+- [x] Add mypy (strict for `src/`) to the lint job; make Python 3.13 a required CI target.
+  *mypy runs in default mode, not strict, in its own `types` job (it needs the dependencies installed, pinned by
+  `requirements.txt`). Strict mode stays the 0.4.0 target in [Targets](#targets). Python 3.13 runs on Ubuntu
+  and Windows.*
+- [x] Add this roadmap to the docs index.
 
-Exit criteria: all CI jobs green on `main`; tags `v0.1.0` and `v0.2.0` exist; mypy passes with no ignores
-except for untyped third-party imports.
+Exit criteria:
+- [x] All CI jobs green on `main`.
+- [x] Tags `v0.1.0` and `v0.2.0` exist.
+- [x] mypy passes with no ignores except for untyped third-party imports (SciPy, Stone Soup, Plotly, pandas).
 
 ## M1 — Fast and parallel (0.3.0, 9 – 29 Nov 2026)
 
 **Goal:** make large experiments cheap, so that later verdicts can rest on hundreds or thousands of seeds.
 
+Status: most deliverables shipped early, in 0.2.0. What is left decides when 0.3.0 is cut.
+
 Deliverables:
-- A plain NumPy tracker kernel with the same behaviour as the current one (same gating, selection, initiation,
+- [x] A plain NumPy tracker kernel with the same behaviour as the current one (same gating, selection, initiation,
   coast and Joseph-form update). The textbook oracle in `tests/test_estimation_oracle.py` is the starting point.
-- The Stone Soup tracker stays as a second implementation, selectable with a setting, and a test runs both on
+- [x] The Stone Soup tracker stays as a second implementation, selectable with a setting, and a test runs both on
   the golden seeds and requires identical results.
-- Seeds are evaluated in parallel across processes (`--workers N`, default: number of cores), with output
+  *Selected by class (`StoneSoupTracker`), not by a `TrackerConfig` setting, so that the choice never enters rule
+  books or the learning loop. `tests/test_tracker_equivalence.py` also covers stress cases; the largest
+  difference seen is 4.6e-13.*
+- [x] Seeds are evaluated in parallel across processes (`--workers N`, default: number of cores), with output
   identical to a serial run.
-- The learning loop's evaluation cache and agents use the parallel path.
-- A benchmark test that records run time per seed, so that speed regressions show up.
-- ADR 0007: NumPy kernel is the default, Stone Soup is the cross-check.
+  *The default is the number of cores but at most 4: each worker needs about 100 MB, and 8 workers ran an 8 GB
+  machine out of memory. A crashed worker gives a clear error instead of a traceback.*
+- [x] The learning loop's evaluation cache and agents use the parallel path.
+- [ ] A benchmark test that records run time per seed, so that speed regressions show up.
+  *Not yet. The performance budgets in `tests/test_performance.py` were tightened 4 – 8×, but they record nothing.*
+- [x] ADR 0007: NumPy kernel is the default, Stone Soup is the cross-check.
 
 Exit criteria:
-- The golden regression passes unchanged on the new kernel (results agree to 1e-9 m).
-- One run at least 20× faster than today (below 17 ms).
-- `compare --seeds 1000` over all four scenarios in under 60 s on the development machine.
-- Serial and parallel runs give byte-identical CLI output.
+- [x] The golden regression passes unchanged on the new kernel (results agree to 1e-9 m).
+- [ ] One run at least 20× faster than today (below 17 ms).
+  *About 60 ms, 5.5× faster. The tracker itself is about 9× faster (0.14 ms per scan); most of what remains is
+  schema validation (pydantic), the simulator and metric computation.*
+- [ ] `compare --seeds 1000` over all four scenarios in under 60 s on the development machine.
+  *117 s with 4 workers.*
+- [x] Serial and parallel runs give byte-identical CLI output.
+  *Identical except the `processing_time_s` row, which is wall-clock time; tests compare everything else.*
 
 Risk: subtle differences from Stone Soup (angle wrapping, symmetrisation). Mitigation: compare the two
 implementations step by step on the golden seeds and on the hypothesis-generated edge cases.
@@ -280,17 +310,17 @@ validate the choice by Monte Carlo).
 
 ## Targets
 
-| Target | Today | 0.4.0 (Dec) | 0.7.0 (Feb) | 1.0.0 (Apr) |
-|---|---|---|---|---|
-| Seeds behind each verdict | 20 | 1,000 possible | 200 by default | 200 by default |
-| Time for 1,000 seeds × 4 scenarios | about 37 min | under 60 s | under 60 s | under 60 s |
-| Scenario families | 0 (4 fixed scenarios) | 5 | 6+ | suite-2027.1 frozen |
-| Baseline containment, `reference` | 0.92 | 0.92 | 0.95 ± 0.02 | 0.95 ± 0.02 |
-| Fusion vs baseline RMSE, `biased_bearing` | +97 % | +97 % | ≤ +5 % | ≤ 0 % |
-| Bias detection delay / false alarms | none | none | ≤ 30 s / ≤ 1 % | ≤ 30 s / ≤ 1 % |
-| Learned policy on unseen families | not tested | not tested | not tested | better on ≥ 2/3, never > 2 % worse |
-| Comparison with a theoretical bound | none | none | none | PCRLB for every scenario |
-| Static typing | none | mypy strict | mypy strict | mypy strict |
+| Target | At the audit | 0.2.0 (Nov) | 0.4.0 (Dec) | 0.7.0 (Feb) | 1.0.0 (Apr) |
+|---|---|---|---|---|---|
+| Seeds behind each verdict | 20 | 20 (200 take 26 s) | 1,000 possible | 200 by default | 200 by default |
+| Time for 1,000 seeds × 4 scenarios | about 37 min | 117 s | under 60 s | under 60 s | under 60 s |
+| Scenario families | 0 (4 fixed scenarios) | 0 | 5 | 6+ | suite-2027.1 frozen |
+| Baseline containment, `reference` | 0.92 | 0.92 | 0.92 | 0.95 ± 0.02 | 0.95 ± 0.02 |
+| Fusion vs baseline RMSE, `biased_bearing` | +97 % | +97 % | +97 % | ≤ +5 % | ≤ 0 % |
+| Bias detection delay / false alarms | none | none | none | ≤ 30 s / ≤ 1 % | ≤ 30 s / ≤ 1 % |
+| Learned policy on unseen families | not tested | not tested | not tested | not tested | better on ≥ 2/3, never > 2 % worse |
+| Comparison with a theoretical bound | none | none | none | none | PCRLB for every scenario |
+| Static typing | none | mypy (default mode) | mypy strict | mypy strict | mypy strict |
 
 ## Risks
 
