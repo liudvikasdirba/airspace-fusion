@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 .env
 data/
+*.egg-info/
+build/
+dist/
+constraints-min.txt
+.coverage
+coverage.xml

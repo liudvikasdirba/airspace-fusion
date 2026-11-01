@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "airspace-fusion"
+abstract: >-
+  Simulation-only single-object tracking demonstrator that compares a position-only baseline
+  with position + bearing-only fusion against simulated ground truth.
+type: software
+authors:
+  - given-names: Liudvikas
+version: 0.1.0
+date-released: 2026-10-31
+license: MIT
+repository-code: "https://github.com/liudvikasdirba/airspace-fusion"
+keywords:
+  - target tracking
+  - sensor fusion
+  - Kalman filter
+  - bearing-only
+  - simulation
