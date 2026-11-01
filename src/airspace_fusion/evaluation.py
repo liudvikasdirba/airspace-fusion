@@ -7,9 +7,12 @@ Every number is computed from an actual simulation run.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from concurrent.futures import Executor, ProcessPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+from itertools import repeat
 
 import numpy as np
 from scipy import stats
@@ -24,6 +27,8 @@ CHI2_2DOF_95 = float(stats.chi2.ppf(0.95, 2))
 # Relative RMSE change below which a difference is not considered material.
 MATERIAL_RELATIVE_CHANGE = 0.05
 SIGNIFICANCE_LEVEL = 0.05
+# Below this many seeds per comparison, starting worker processes costs more than it saves.
+MIN_PARALLEL_SEEDS = 4
 
 
 class Mode(str, Enum):
@@ -184,12 +189,40 @@ METRIC_NAMES = (
 )
 
 
-def compare_modes(scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Sequence[int]) -> ComparisonSummary:
-    per_mode: dict[Mode, list[RunMetrics]] = {mode: [] for mode in Mode}
-    for seed in seeds:
-        run = run_single(scenario, tracker, seed)
-        for mode in Mode:
-            per_mode[mode].append(run.modes[mode].metrics)
+def seed_metrics(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> dict[Mode, RunMetrics]:
+    """Both modes' metrics for one seed. Module-level, so worker processes can run it."""
+    run = run_single(scenario, tracker, seed)
+    return {mode: run.modes[mode].metrics for mode in Mode}
+
+
+@contextmanager
+def seed_executor(workers: int, seeds_per_comparison: int) -> Iterator[Executor | None]:
+    """A process pool for ``compare_modes``, or None when running serially is cheaper.
+
+    Create it once per command and pass it to every comparison: starting the worker processes takes
+    a moment, because each one imports NumPy, SciPy and pydantic.
+    """
+    if workers < 2 or seeds_per_comparison < MIN_PARALLEL_SEEDS:
+        yield None
+        return
+    with ProcessPoolExecutor(max_workers=min(workers, seeds_per_comparison)) as executor:
+        yield executor
+
+
+def compare_modes(
+    scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Sequence[int], executor: Executor | None = None
+) -> ComparisonSummary:
+    """Paired baseline/fusion comparison over ``seeds``. With an ``executor``, seeds run in parallel.
+
+    Seeds are independent and results are collected in seed order, so the summary is the same either way;
+    only ``processing_time_s`` (wall time) can differ.
+    """
+    seeds = tuple(seeds)
+    if executor is None:
+        per_seed = [seed_metrics(scenario, tracker, seed) for seed in seeds]
+    else:
+        per_seed = list(executor.map(seed_metrics, repeat(scenario), repeat(tracker), seeds))
+    per_mode = {mode: [metrics[mode] for metrics in per_seed] for mode in Mode}
     metrics = {
         mode: {name: summarise([float(getattr(m, name)) for m in runs]) for name in METRIC_NAMES}
         for mode, runs in per_mode.items()
@@ -198,4 +231,4 @@ def compare_modes(scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Seque
         [m.position_rmse_m for m in per_mode[Mode.BASELINE]],
         [m.position_rmse_m for m in per_mode[Mode.FUSION]],
     )
-    return ComparisonSummary(scenario.name, tuple(seeds), metrics, delta, ci, rel, p, verdict)
+    return ComparisonSummary(scenario.name, seeds, metrics, delta, ci, rel, p, verdict)

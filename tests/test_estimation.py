@@ -7,12 +7,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from stonesoup.types.array import StateVector
-from stonesoup.types.state import GaussianState
 
 import airspace_fusion.estimation as estimation
 from airspace_fusion.config import SCENARIOS, TrackerConfig
-from airspace_fusion.estimation import Disposition, SingleTargetTracker, run_tracker
+from airspace_fusion.estimation import Disposition, SingleTargetTracker, TrackState, run_tracker
+from airspace_fusion.estimation_stonesoup import StoneSoupTracker
 from airspace_fusion.schemas import Measurement, parse_records
 from airspace_fusion.simulator import simulate
 
@@ -196,25 +195,27 @@ def test_nearest_in_gate_selected():
     assert result.dispositions["farther"] == Disposition.NOT_SELECTED
 
 
-def test_bearing_update_reduces_cross_range_uncertainty_only():
-    tracker = SingleTargetTracker(CFG)
-    prior = GaussianState(StateVector([1000.0, 0.0, 0.0, 0.0]), np.diag([100.0, 1.0, 100.0, 1.0]), timestamp=at(0))
+@pytest.mark.parametrize("tracker_class", [SingleTargetTracker, StoneSoupTracker])
+def test_bearing_update_reduces_cross_range_uncertainty_only(tracker_class):
+    tracker = tracker_class(CFG)
+    prior = TrackState(np.array([1000.0, 0.0, 0.0, 0.0]), np.diag([100.0, 1.0, 100.0, 1.0]), at(0))
     # Bearing sensor at origin looks along +x: bearing constrains y (cross-range), not x (range).
     m = brg(0, (0.0, 0.0), (1000.0, 0.0), std=0.001)
     post, used = tracker._update_with_sensor(prior, [m], at(0), {})
     assert used == [m]
-    p = np.asarray(post.covar)
+    p = post.covar
     assert p[2, 2] < 10.0  # y variance strongly reduced (1 mrad at 1 km = 1 m)
     assert p[0, 0] == pytest.approx(100.0, rel=1e-6)  # x variance unchanged
 
 
-def test_position_covariance_weighting():
-    tracker = SingleTargetTracker(CFG)
-    prior = GaussianState(StateVector([0.0, 0.0, 0.0, 0.0]), np.diag([100.0, 1.0, 100.0, 1.0]), timestamp=at(0))
+@pytest.mark.parametrize("tracker_class", [SingleTargetTracker, StoneSoupTracker])
+def test_position_covariance_weighting(tracker_class):
+    tracker = tracker_class(CFG)
+    prior = TrackState(np.zeros(4), np.diag([100.0, 1.0, 100.0, 1.0]), at(0))
     tight, _ = tracker._update_with_sensor(prior, [pos(0, 5.0, 5.0, std=1.0)], at(0), {})
     loose, _ = tracker._update_with_sensor(prior, [pos(0, 5.0, 5.0, std=30.0)], at(0), {})
-    assert np.asarray(tight.covar)[0, 0] < np.asarray(loose.covar)[0, 0]
-    assert tight.state_vector[0] > loose.state_vector[0]  # pulled further toward the precise measurement
+    assert tight.covar[0, 0] < loose.covar[0, 0]
+    assert tight.mean[0] > loose.mean[0]  # pulled further toward the precise measurement
 
 
 def test_bearing_angle_wraparound():

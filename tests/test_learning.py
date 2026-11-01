@@ -352,6 +352,24 @@ def test_cli_learn_then_compare_with_rules(tmp_path, capsys):
     assert "learned rule book v" in capsys.readouterr().out
 
 
+@pytest.mark.slow
+def test_cli_learn_same_with_parallel_workers(tmp_path, capsys):
+    """Parallel evaluation must not change what is learned."""
+    books = []
+    for workers in ("1", "2"):
+        rules = tmp_path / f"rules-{workers}.json"
+        main(["learn", "--scenario", "reference", "--rounds", "1", "--train-seeds", "4", "--holdout-seeds", "4",
+              "--max-candidates", "2", "--rules", str(rules), "--log", str(tmp_path / "log.jsonl"),
+              "--workers", workers])
+        capsys.readouterr()
+        book = json.loads(rules.read_text(encoding="utf-8"))
+        for lesson in book["lessons"]:
+            lesson.pop("run_id")  # derived from the start time
+        books.append(book)
+    assert books[0]["lessons"]
+    assert books[0] == books[1]
+
+
 def test_cli_compare_rejects_missing_or_corrupt_rule_book(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["compare", "--scenario", "reference", "--seeds", "2", "--rules", str(tmp_path / "typo.json")])

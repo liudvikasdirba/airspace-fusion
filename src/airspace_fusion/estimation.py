@@ -1,4 +1,4 @@
-"""Single-object state estimation using Stone Soup Kalman components.
+"""Single-object state estimation: a Kalman/EKF filter written directly in NumPy.
 
 Model and assumptions (deliberately simple):
 
@@ -9,8 +9,9 @@ Model and assumptions (deliberately simple):
 * POSITION_2D: linear Gaussian measurement model, covariance taken from the
   measurement itself (Kalman update).
 * BEARING_ONLY: ``atan2`` measurement from the reporting sensor's position with
-  the reported angular variance, linearised by an extended Kalman update.
-  Innovations are wrapped to [-pi, pi) (Stone Soup ``Bearing`` arithmetic).
+  the reported angular variance, linearised by an extended Kalman update with the
+  exact analytic Jacobian. Innovations are wrapped to [-pi, pi).
+* Covariance updates use the Joseph form and are then symmetrised.
 * Exactly one object. Each sensor contributes at most one measurement of each type per scan:
   the in-gate candidate with the smallest normalised innovation squared (NIS).
   This is gating plus nearest-neighbour selection, not multi-object association.
@@ -23,12 +24,17 @@ Model and assumptions (deliberately simple):
   Bearings refine a track but cannot confirm it: they carry no range information,
   so on their own they could keep a diverged track alive indefinitely.
 
+The filter equations are the same as Stone Soup's ``KalmanPredictor`` and
+``ExtendedKalmanUpdater``. ``estimation_stonesoup.StoneSoupTracker`` runs the same
+gating and initiation logic on Stone Soup and serves as a cross-check (ADR 0007).
+
 This module only ever receives validated ``Measurement`` objects and the scan
 schedule. It has no access to ground truth.
 """
 
 from __future__ import annotations
 
+import math
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
@@ -37,47 +43,59 @@ from datetime import datetime, timedelta
 
 import numpy as np
 from scipy.stats import chi2
-from stonesoup.models.measurement.linear import LinearGaussian
-from stonesoup.models.measurement.nonlinear import Cartesian2DToBearing
-from stonesoup.models.transition.linear import CombinedLinearGaussianTransitionModel, ConstantVelocity
-from stonesoup.predictor.kalman import KalmanPredictor
-from stonesoup.types.angle import Bearing
-from stonesoup.types.array import StateVector
-from stonesoup.types.detection import Detection
-from stonesoup.types.hypothesis import SingleHypothesis
-from stonesoup.types.state import GaussianState
-from stonesoup.updater.kalman import ExtendedKalmanUpdater
 
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
 
 POSITION_INDICES = (0, 2)
+POSITION_SLICE = slice(0, None, 2)  # the same indices; slicing is much cheaper than np.ix_
 SUPPORTED_TYPES = (MeasurementType.POSITION_2D, MeasurementType.BEARING_ONLY)
 # Bearing linearisation is unreliable when the predicted target is this close to the
 # bearing sensor relative to the position uncertainty (in standard deviations).
 MIN_BEARING_RANGE_SIGMAS = 3.0
 
 
-class AnalyticBearingModel(Cartesian2DToBearing):
-    """``Cartesian2DToBearing`` with the exact Jacobian of ``atan2``.
+POSITION_MATRIX = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]])
+IDENTITY = np.eye(4)
 
-    Stone Soup's default Jacobian is a forward finite difference, which is off by up to
-    ~4e-4 relative for this model. A rotation offset only shifts the bearing by a
-    constant, so it does not affect the Jacobian.
+
+@dataclass(frozen=True)
+class TrackState:
+    """Gaussian track state: mean ``[x, vx, y, vy]``, 4x4 covariance, and the time they refer to.
+
+    The arrays are never modified after construction; every filter step makes new ones.
     """
 
-    def jacobian(self, state, **kwargs) -> np.ndarray:
-        x = np.asarray(state.state_vector, dtype=float).ravel()
-        offset = np.asarray(self.translation_offset, dtype=float).ravel()
-        ix, iy = self.mapping
-        dx, dy = x[ix] - offset[0], x[iy] - offset[1]
-        r2 = dx * dx + dy * dy
-        if r2 == 0.0:
-            raise FloatingPointError("bearing Jacobian undefined at the sensor position")
-        jac = np.zeros((1, self.ndim_state))
-        jac[0, ix] = -dy / r2
-        jac[0, iy] = dx / r2
-        return jac
+    mean: np.ndarray
+    covar: np.ndarray
+    timestamp: datetime
+
+
+@dataclass(frozen=True)
+class Innovation:
+    """One measurement against a predicted state: what the Kalman update needs, computed once."""
+
+    vector: np.ndarray  # measurement minus predicted measurement (bearings wrapped to [-pi, pi))
+    jacobian: np.ndarray  # H, measurement dimension x 4
+    noise: np.ndarray  # R
+    cross_covar: np.ndarray  # P H^T
+    covar: np.ndarray  # S = H P H^T + R
+    covar_inverse: np.ndarray
+
+    @property
+    def nis(self) -> float:
+        return float(self.vector @ self.covar_inverse @ self.vector)
+
+
+def small_inverse(s: np.ndarray) -> np.ndarray:
+    """Inverse of a 1x1 or 2x2 matrix in closed form; ``np.linalg.inv`` costs more in overhead than in work."""
+    if s.shape == (1, 1):
+        return 1.0 / s
+    (a, b), (c, d) = s
+    det = a * d - b * c
+    if not det > 0.0:  # an innovation covariance is positive definite; also catches NaN
+        raise FloatingPointError("innovation covariance is not positive definite")
+    return np.array([[d, -b], [-c, a]]) / det
 
 
 class Disposition:
@@ -106,13 +124,13 @@ class Estimate:
 
     @property
     def position(self) -> np.ndarray | None:
-        return None if self.state is None else self.state[list(POSITION_INDICES)]
+        return None if self.state is None else self.state[POSITION_SLICE].copy()
 
     @property
     def position_covariance(self) -> np.ndarray | None:
         if self.covariance is None:
             return None
-        return self.covariance[np.ix_(POSITION_INDICES, POSITION_INDICES)]
+        return self.covariance[POSITION_SLICE, POSITION_SLICE].copy()
 
 
 @dataclass
@@ -145,67 +163,93 @@ class TrackerResult:
 
 
 class SingleTargetTracker:
+    """Gating, nearest-neighbour selection, initiation and track drop around a NumPy Kalman/EKF filter.
+
+    The filter steps are ``_predict``, ``_nis`` and ``_update``; a subclass can replace them
+    (``estimation_stonesoup.StoneSoupTracker`` does) and keep everything else.
+    """
+
     def __init__(self, config: TrackerConfig) -> None:
         self.config = config
-        q = config.process_noise_m2_s3
-        self.transition_model = CombinedLinearGaussianTransitionModel([ConstantVelocity(q), ConstantVelocity(q)])
-        self.predictor = KalmanPredictor(self.transition_model)
-        self.updater = ExtendedKalmanUpdater(
-            measurement_model=None, use_joseph_cov=True, force_symmetric_covariance=True
-        )
         self.max_coast = timedelta(seconds=config.max_coast_s)
         # Chi-square gate thresholds by measurement dimension (1 = bearing, 2 = position).
         self.gate_thresholds = {dof: float(chi2.ppf(config.gate_probability, dof)) for dof in (1, 2)}
+        self._transitions: dict[float, tuple[np.ndarray, np.ndarray]] = {}
 
-    # -- measurement models -------------------------------------------------
+    # -- filter steps -----------------------------------------------------------
 
-    @staticmethod
-    def _detection(m: Measurement) -> Detection:
+    def _transition(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
+        """Transition matrix F and process noise Q over ``dt`` seconds; cached, since scans are regular."""
+        cached = self._transitions.get(dt)
+        if cached is None:
+            q = self.config.process_noise_m2_s3
+            f1 = np.array([[1.0, dt], [0.0, 1.0]])
+            adt = abs(dt)
+            q1 = np.array([[adt**3 / 3, adt**2 / 2], [adt**2 / 2, adt]]) * q
+            f, noise = np.zeros((4, 4)), np.zeros((4, 4))
+            f[:2, :2] = f[2:, 2:] = f1
+            noise[:2, :2] = noise[2:, 2:] = q1
+            cached = self._transitions[dt] = (f, noise)
+        return cached
+
+    def _predict(self, state: TrackState, t: datetime) -> TrackState:
+        if state.timestamp == t:
+            return state  # F = I and Q = 0: nothing changes
+        f, noise = self._transition((t - state.timestamp).total_seconds())
+        return TrackState(f @ state.mean, f @ state.covar @ f.T + noise, t)
+
+    def _innovation(self, prior: TrackState, m: Measurement) -> Innovation:
+        x = prior.mean
         if m.measurement_type is MeasurementType.POSITION_2D:
-            model = LinearGaussian(
-                ndim_state=4, mapping=POSITION_INDICES, noise_covar=m.measurement_uncertainty.as_array()
-            )
-            vector = StateVector(list(m.measurement_value))
+            jacobian = POSITION_MATRIX
+            noise = m.measurement_uncertainty.as_array()
+            vector = np.array(m.measurement_value) - x[POSITION_SLICE]
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
-            model = AnalyticBearingModel(
-                ndim_state=4,
-                mapping=POSITION_INDICES,
-                noise_covar=np.array([[m.measurement_uncertainty.std_rad**2]]),
-                translation_offset=StateVector(list(m.sensor_position)),
-            )
-            vector = StateVector([Bearing(m.measurement_value[0])])
+            dx, dy = x[0] - m.sensor_position[0], x[2] - m.sensor_position[1]
+            r2 = dx * dx + dy * dy
+            if r2 == 0.0:
+                raise FloatingPointError("bearing Jacobian undefined at the sensor position")
+            jacobian = np.array([[-dy / r2, 0.0, dx / r2, 0.0]])  # exact derivative of atan2
+            noise = np.array([[m.measurement_uncertainty.std_rad**2]])
+            vector = np.array([wrap_angle(m.measurement_value[0] - math.atan2(dy, dx))])
         else:  # guarded by the caller; never reinterpret another type
             raise ValueError(f"unsupported measurement type {m.measurement_type}")
-        return Detection(vector, timestamp=m.timestamp_utc, measurement_model=model)
+        cross_covar = prior.covar @ jacobian.T
+        covar = jacobian @ cross_covar + noise
+        return Innovation(vector, jacobian, noise, cross_covar, covar, small_inverse(covar))
 
-    def _nis(self, prior: GaussianState, m: Measurement) -> tuple[float, SingleHypothesis]:
-        detection = self._detection(m)
-        mp = self.updater.predict_measurement(prior, detection.measurement_model)
-        innovation = np.asarray(detection.state_vector, dtype=float) - np.asarray(mp.state_vector, dtype=float)
-        if m.measurement_type is MeasurementType.BEARING_ONLY:
-            innovation[0, 0] = wrap_angle(innovation[0, 0])
-        s = np.asarray(mp.covar, dtype=float)
-        nis = (innovation.T @ np.linalg.solve(s, innovation)).item()
+    def _nis(self, prior: TrackState, m: Measurement) -> tuple[float, object]:
+        """NIS of ``m`` against ``prior``, plus whatever ``_update`` needs to apply it."""
+        innovation = self._innovation(prior, m)
+        nis = innovation.nis
         if not np.isfinite(nis):
             raise FloatingPointError(f"non-finite NIS for measurement {m.measurement_id}")
-        return nis, SingleHypothesis(prior, detection, measurement_prediction=mp)
+        return nis, innovation
+
+    def _update(self, prior: TrackState, m: Measurement, innovation: object) -> TrackState:
+        """Extended Kalman update with the Joseph-form covariance, then symmetrised."""
+        assert isinstance(innovation, Innovation)
+        gain = innovation.cross_covar @ innovation.covar_inverse
+        i_kh = IDENTITY - gain @ innovation.jacobian
+        covar = i_kh @ prior.covar @ i_kh.T + gain @ innovation.noise @ gain.T
+        return TrackState(prior.mean + gain @ innovation.vector, (covar + covar.T) / 2, m.timestamp_utc)
 
     @staticmethod
-    def _bearing_geometry_ok(prior: GaussianState, m: Measurement) -> bool:
-        pos = np.asarray(prior.state_vector, dtype=float).ravel()[list(POSITION_INDICES)]
-        rng = float(np.linalg.norm(pos - np.asarray(m.sensor_position)))
-        pos_cov = np.asarray(prior.covar, dtype=float)[np.ix_(POSITION_INDICES, POSITION_INDICES)]
-        sigma = float(np.sqrt(np.max(np.linalg.eigvalsh(pos_cov))))
+    def _bearing_geometry_ok(prior: TrackState, m: Measurement) -> bool:
+        x, p = prior.mean, prior.covar
+        rng = math.hypot(x[0] - m.sensor_position[0], x[2] - m.sensor_position[1])
+        # Largest eigenvalue of the 2x2 position covariance, in closed form.
+        half_trace, half_diff = (p[0, 0] + p[2, 2]) / 2, (p[0, 0] - p[2, 2]) / 2
+        sigma = math.sqrt(half_trace + math.hypot(half_diff, p[0, 2]))
         return rng > MIN_BEARING_RANGE_SIGMAS * sigma
 
     @staticmethod
-    def _check_state(state: GaussianState) -> None:
-        x = np.asarray(state.state_vector, dtype=float)
-        p = np.asarray(state.covar, dtype=float)
-        if not (np.all(np.isfinite(x)) and np.all(np.isfinite(p))):
+    def _check_state(state: TrackState) -> None:
+        # A sum is finite only if every term is (the values are nowhere near overflow); cheaper than isfinite.
+        if not math.isfinite(float(state.mean.sum() + state.covar.sum())):
             raise FloatingPointError("non-finite state or covariance after update")
         try:
-            np.linalg.cholesky(p)
+            np.linalg.cholesky(state.covar)
         except np.linalg.LinAlgError as exc:
             raise FloatingPointError("state covariance lost positive definiteness") from exc
 
@@ -213,7 +257,7 @@ class SingleTargetTracker:
 
     def _initiate(
         self, previous: Sequence[Measurement], current: Sequence[Measurement]
-    ) -> tuple[GaussianState, Measurement, Measurement] | None:
+    ) -> tuple[TrackState, Measurement, Measurement] | None:
         """Two-point differencing on consecutive scans; picks the slowest plausible pair."""
         best: tuple[float, Measurement, Measurement] | None = None
         for a in previous:
@@ -241,7 +285,7 @@ class SingleTargetTracker:
         r = np.zeros((4, 4))
         r[:2, :2] = a.measurement_uncertainty.as_array()
         r[2:, 2:] = b.measurement_uncertainty.as_array()
-        state = GaussianState(StateVector(mapping @ z), mapping @ r @ mapping.T, timestamp=b.timestamp_utc)
+        state = TrackState(mapping @ z, mapping @ r @ mapping.T, b.timestamp_utc)
         self._check_state(state)
         return state, a, b
 
@@ -266,7 +310,7 @@ class SingleTargetTracker:
             dispositions[m.measurement_id] = Disposition.NO_TRACK  # provisional
             by_time[m.timestamp_utc].append(m)
 
-        track: GaussianState | None = None
+        track: TrackState | None = None
         last_position_update: datetime | None = None
         previous_positions: list[Measurement] = []
         initiations = 0
@@ -292,7 +336,7 @@ class SingleTargetTracker:
                 for group in _group_by_sensor_and_type(scan):
                     state, used = self._update_with_sensor(state, group, t, dispositions, update_nis)
                     accepted.extend(used)
-                track = state if state.timestamp == t else self.predictor.predict(state, timestamp=t)
+                track = self._predict(state, t)
                 if any(m.measurement_type is MeasurementType.POSITION_2D for m in accepted):
                     last_position_update = t
             else:
@@ -314,8 +358,8 @@ class SingleTargetTracker:
                 estimates.append(
                     Estimate(
                         timestamp=t,
-                        state=None if track is None else np.asarray(track.state_vector, dtype=float).ravel(),
-                        covariance=None if track is None else np.asarray(track.covar, dtype=float),
+                        state=None if track is None else track.mean,
+                        covariance=None if track is None else track.covar,
                         updated_by=tuple(m.measurement_id for m in accepted),
                         updated_sensors=frozenset(m.sensor_id for m in accepted),
                     )
@@ -332,32 +376,32 @@ class SingleTargetTracker:
 
     def _update_with_sensor(
         self,
-        state: GaussianState,
+        state: TrackState,
         group: list[Measurement],
         t: datetime,
         dispositions: dict[str, str],
         update_nis: dict[str, float] | None = None,
-    ) -> tuple[GaussianState, list[Measurement]]:
+    ) -> tuple[TrackState, list[Measurement]]:
         """Gate one sensor's measurements of one type and apply the nearest in-gate one."""
-        prior = self.predictor.predict(state, timestamp=t)
+        prior = self._predict(state, t)
         threshold = self.gate_thresholds[len(group[0].measurement_value)]
-        candidates: list[tuple[float, Measurement, SingleHypothesis]] = []
+        candidates: list[tuple[float, Measurement, object]] = []
         for m in group:
             if m.measurement_type is MeasurementType.BEARING_ONLY and not self._bearing_geometry_ok(prior, m):
                 dispositions[m.measurement_id] = Disposition.DEGENERATE_GEOMETRY
                 continue
-            nis, hypothesis = self._nis(prior, m)
+            nis, payload = self._nis(prior, m)
             if nis > threshold:
                 dispositions[m.measurement_id] = Disposition.OUTSIDE_GATE
             else:
-                candidates.append((nis, m, hypothesis))
+                candidates.append((nis, m, payload))
         if not candidates:
             return prior, []
         candidates.sort(key=lambda c: (c[0], c[1].measurement_id))
-        chosen_nis, chosen, hypothesis = candidates[0]
+        chosen_nis, chosen, payload = candidates[0]
         for _, m, _ in candidates[1:]:
             dispositions[m.measurement_id] = Disposition.NOT_SELECTED
-        posterior = self.updater.update(hypothesis)
+        posterior = self._update(prior, chosen, payload)
         self._check_state(posterior)
         dispositions[chosen.measurement_id] = Disposition.ACCEPTED
         if update_nis is not None:

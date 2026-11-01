@@ -109,6 +109,7 @@ ALLOWED_IMPORTS = {
     "config": {"schemas"},
     "simulator": {"config", "schemas"},
     "estimation": {"config", "schemas"},
+    "estimation_stonesoup": {"config", "estimation", "schemas"},
     "evaluation": {"config", "estimation", "schemas", "simulator"},
     "learning": {"config", "evaluation"},
     "agents": {"config", "evaluation", "learning"},

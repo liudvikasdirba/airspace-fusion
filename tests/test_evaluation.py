@@ -8,12 +8,14 @@ import pytest
 from airspace_fusion.config import SCENARIOS, TrackerConfig
 from airspace_fusion.estimation import Disposition, Estimate, TrackerResult
 from airspace_fusion.evaluation import (
+    MIN_PARALLEL_SEEDS,
     Mode,
     Verdict,
     compare_modes,
     evaluate_run,
     paired_verdict,
     run_single,
+    seed_executor,
     sensors_for_mode,
 )
 from airspace_fusion.simulator import GroundTruth
@@ -129,6 +131,30 @@ def test_compare_modes_reproducible_and_complete():
             if name != "processing_time_s":
                 assert summary == b.metrics[mode][name]
     assert a.verdict == b.verdict and a.rmse_delta_mean_m == b.rmse_delta_mean_m
+
+
+def without_timing(summary):
+    return {mode: {k: v for k, v in m.items() if k != "processing_time_s"} for mode, m in summary.metrics.items()}
+
+
+def test_parallel_comparison_matches_serial():
+    scenario = SCENARIOS["biased_bearing"].model_copy(update={"duration_s": 40.0})
+    seeds = range(3, 3 + MIN_PARALLEL_SEEDS + 1)
+    serial = compare_modes(scenario, TrackerConfig(), seeds)
+    with seed_executor(2, len(seeds)) as executor:
+        assert executor is not None
+        parallel = compare_modes(scenario, TrackerConfig(), seeds, executor)
+    assert parallel.seeds == serial.seeds == tuple(seeds)
+    assert without_timing(parallel) == without_timing(serial)
+    assert (parallel.rmse_delta_mean_m, parallel.rmse_delta_ci95_m, parallel.rmse_p_value, parallel.verdict) == (
+        serial.rmse_delta_mean_m, serial.rmse_delta_ci95_m, serial.rmse_p_value, serial.verdict
+    )
+
+
+@pytest.mark.parametrize("workers, seeds", [(1, 100), (2, MIN_PARALLEL_SEEDS - 1)])
+def test_seed_executor_runs_serially_when_parallel_does_not_pay(workers, seeds):
+    with seed_executor(workers, seeds) as executor:
+        assert executor is None
 
 
 def test_disposition_counts_are_derived():
