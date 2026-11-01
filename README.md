@@ -82,12 +82,17 @@ One seeded simulation, both modes:
 .venv/Scripts/python -m airspace_fusion.cli run --scenario reference --seed 0
 ```
 
-Multi-seed comparison over all scenarios (about 45 s for 20 seeds). Use `--scenario NAME` for one scenario and
-`--first-seed N` to start from a different seed:
+Multi-seed comparison over all scenarios (about 15 s for 20 seeds, 2 minutes for 200). Use `--scenario NAME` for
+one scenario and `--first-seed N` to start from a different seed:
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli compare --seeds 20
 ```
+
+`compare` and `learn` evaluate seeds in parallel worker processes, by default as many as the CPU has cores but at
+most 4. Results are identical to a serial run; only `processing_time_s` differs. Each worker needs about 100 MB:
+on a machine with little free memory use `--workers 2` or `--workers 1` (serial), and on a large machine more
+workers can help. Comparisons of fewer than 4 seeds always run serially.
 
 ## Learning loop
 
@@ -135,7 +140,7 @@ Ground truth is used only to score settings, which is possible only in simulatio
 still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
 always give the same result.
 
-Result of `learn --rounds 3` from an empty rule book (about 90 s; converges after round 2), checked on seeds 0–19:
+Result of `learn --rounds 3` from an empty rule book (about 30 s with 4 workers; converges after round 2), checked on seeds 0–19:
 
 | Scenario | Learned settings | Baseline RMSE (m) | Fusion RMSE (m) | Baseline 95 % containment |
 |---|---|---|---|---|

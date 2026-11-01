@@ -16,6 +16,11 @@ All notable changes to this project are recorded here. The format follows
   `data/learning/`. Evaluations are cached within a run. `learn` exits with status 1 if any scenario failed.
   An unreadable rule book stops the command with an error that names the file.
 - `compare --rules PATH` evaluates the settings from a learned rule book; the file must exist.
+- `compare` and `learn` evaluate seeds in parallel worker processes: `--workers N`, default the CPU count
+  but at most 4 (each worker needs about 100 MB). Results are identical to a serial run; only
+  `processing_time_s` differs. Comparisons of fewer than 4 seeds run serially, because starting workers
+  would cost more than it saves. If a worker stops unexpectedly (usually from running out of memory), the
+  command says so and exits with status 1. In code: `compare_modes(..., executor)` and `seed_executor`.
 - `airspace-fusion --version`.
 - Versioning: the package version is defined once, in `airspace_fusion.__version__`. `ci/release.py`
   checks that `CITATION.cff` and this changelog agree with it and cuts releases.

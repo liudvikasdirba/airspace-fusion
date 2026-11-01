@@ -1,9 +1,11 @@
 """Command-line interface tests (L6)."""
 
 import re
+from concurrent.futures.process import BrokenProcessPool
 
 import pytest
 
+import airspace_fusion.cli as cli
 from airspace_fusion.cli import main
 from airspace_fusion.config import SCENARIOS
 from airspace_fusion.evaluation import METRIC_NAMES, Verdict
@@ -31,6 +33,8 @@ def metric_rows(out: str) -> dict[str, list[str]]:
         (["compare", "--seeds", "0"], "must be at least 1"),
         (["compare", "--seeds", "-3"], "must be at least 1"),
         (["compare", "--seeds", "two"], "invalid"),
+        (["compare", "--workers", "0"], "must be at least 1"),
+        (["learn", "--workers", "-1"], "must be at least 1"),
         (["run", "--seed", "1.5"], "invalid int value"),
         (["run", "--scenario", "nope"], "invalid choice"),
         (["compare", "--scenario", "nope"], "invalid choice"),
@@ -69,6 +73,27 @@ def test_compare_single_scenario_with_first_seed(capsys):
     verdicts = re.findall(r"^VERDICT: (.+)$", out, flags=re.MULTILINE)
     assert len(verdicts) == 1 and verdicts[0] in {v.value for v in Verdict}
     assert re.search(r"paired t-test p=", out)
+
+
+def test_compare_output_same_with_parallel_workers(capsys):
+    args = ["compare", "--scenario", "reference", "--seeds", "4", "--first-seed", "7"]
+
+    def without_timing(out: str) -> list[str]:
+        return [line for line in out.splitlines() if not line.startswith("processing_time_s")]
+
+    serial = run_cli([*args, "--workers", "1"], capsys)
+    parallel = run_cli([*args, "--workers", "2"], capsys)
+    assert without_timing(parallel) == without_timing(serial)
+
+
+def test_crashed_worker_gives_clear_error(monkeypatch, capsys):
+    def broken(*args, **kwargs):
+        raise BrokenProcessPool("a child process terminated abruptly")
+
+    monkeypatch.setattr(cli, "compare_modes", broken)
+    assert main(["compare", "--scenario", "reference", "--seeds", "2"]) == 1
+    err = capsys.readouterr().err
+    assert "worker process stopped unexpectedly" in err and "--workers 1" in err
 
 
 def test_compare_all_scenarios(capsys):

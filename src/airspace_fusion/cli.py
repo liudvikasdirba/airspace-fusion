@@ -3,18 +3,36 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from concurrent.futures import Executor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 
 from airspace_fusion import __version__
-from airspace_fusion.agents import LearningTask, Orchestrator, describe_tracker
+from airspace_fusion.agents import LearningTask, Orchestrator, Skills, describe_tracker
 from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
-from airspace_fusion.evaluation import METRIC_NAMES, Mode, compare_modes, run_single
+from airspace_fusion.evaluation import (
+    METRIC_NAMES,
+    MIN_PARALLEL_SEEDS,
+    Mode,
+    compare_modes,
+    run_single,
+    seed_executor,
+)
 from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
 
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
+# Each worker holds its own NumPy/SciPy/Stone Soup (about 100 MB). Beyond 4, gains are small and starting
+# many workers at once ran an 8 GB machine out of memory, so more must be asked for explicitly.
+DEFAULT_WORKERS = min(os.cpu_count() or 1, 4)
+WORKERS_HELP = (
+    f"processes that evaluate seeds in parallel (default: {DEFAULT_WORKERS}; 1 runs serially). "
+    f"Fewer than {MIN_PARALLEL_SEEDS} seeds per comparison always run serially."
+)
 
 
 def _positive_int(text: str) -> int:
@@ -48,21 +66,26 @@ def _compare(args: argparse.Namespace) -> None:
     # An explicitly named rule book must exist: silently falling back to defaults would mislabel the results.
     rules = _load_rules(args, must_exist=True) if args.rules else None
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
-    for name in names:
-        tracker = rules.tracker_for(name) if rules else TrackerConfig()
-        s = compare_modes(SCENARIOS[name], tracker, seeds)
-        print(f"== {name}: {SCENARIOS[name].description}")
-        if rules:
-            print(f"learned rule book v{rules.version}: {describe_tracker(tracker)}, fusion "
-                  f"{'allowed' if rules.fusion_enabled(name) else 'recommended against'}")
-        print(f"{'metric':<24}{'baseline':>22}{'fusion':>22}")
-        for metric in METRIC_NAMES:
-            cells = [s.metrics[m][metric] for m in Mode]
-            print(f"{metric:<24}" + "".join(f"{f'{c.mean:.4g} +/- {c.std:.2g}':>22}" for c in cells))
-        print(f"RMSE delta (fusion - baseline): {s.rmse_delta_mean_m:+.2f} m "
-              f"[95% CI {s.rmse_delta_ci95_m[0]:+.2f}, {s.rmse_delta_ci95_m[1]:+.2f}], "
-              f"relative {s.rmse_relative_change:+.1%}, paired t-test p={s.rmse_p_value:.3g}")
-        print(f"VERDICT: {s.verdict.value}\n")
+    with seed_executor(args.workers, len(seeds)) as executor:
+        for name in names:
+            _print_comparison(name, seeds, rules, executor)
+
+
+def _print_comparison(name: str, seeds: list[int], rules: RuleBook | None, executor: Executor | None) -> None:
+    tracker = rules.tracker_for(name) if rules else TrackerConfig()
+    s = compare_modes(SCENARIOS[name], tracker, seeds, executor)
+    print(f"== {name}: {SCENARIOS[name].description}")
+    if rules:
+        print(f"learned rule book v{rules.version}: {describe_tracker(tracker)}, fusion "
+              f"{'allowed' if rules.fusion_enabled(name) else 'recommended against'}")
+    print(f"{'metric':<24}{'baseline':>22}{'fusion':>22}")
+    for metric in METRIC_NAMES:
+        cells = [s.metrics[m][metric] for m in Mode]
+        print(f"{metric:<24}" + "".join(f"{f'{c.mean:.4g} +/- {c.std:.2g}':>22}" for c in cells))
+    print(f"RMSE delta (fusion - baseline): {s.rmse_delta_mean_m:+.2f} m "
+          f"[95% CI {s.rmse_delta_ci95_m[0]:+.2f}, {s.rmse_delta_ci95_m[1]:+.2f}], "
+          f"relative {s.rmse_relative_change:+.1%}, paired t-test p={s.rmse_p_value:.3g}")
+    print(f"VERDICT: {s.verdict.value}\n")
 
 
 def _learn(args: argparse.Namespace) -> int:
@@ -78,8 +101,12 @@ def _learn(args: argparse.Namespace) -> int:
         args.parser.error(str(exc))
     # Microseconds keep run ids distinct when several runs start within the same second.
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    orchestrator = Orchestrator(_load_rules(args, must_exist=False), RunLog(run_id, args.log), rules_path=args.rules)
-    outcome = orchestrator.run(task, rounds=args.rounds)
+    rules = _load_rules(args, must_exist=False)
+    seeds_per_comparison = min(len(task.train_seeds), len(task.holdout_seeds))
+    with seed_executor(args.workers, seeds_per_comparison) as executor:
+        skills = Skills(evaluate=partial(compare_modes, executor=executor))
+        orchestrator = Orchestrator(rules, RunLog(run_id, args.log), skills=skills, rules_path=args.rules)
+        outcome = orchestrator.run(task, rounds=args.rounds)
     print(f"run {run_id}: train seeds {task.train_seeds[0]}..{task.train_seeds[-1]}, "
           f"held-out seeds {task.holdout_seeds[0]}..{task.holdout_seeds[-1]}\n")
     print("\n".join(outcome.report))
@@ -108,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     cmp_p.add_argument("--seeds", type=_positive_int, default=20)
     cmp_p.add_argument("--first-seed", type=int, default=0)
     cmp_p.add_argument("--rules", type=Path, help="use the tracker settings from a learned rule book")
+    cmp_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
     cmp_p.set_defaults(func=_compare, parser=cmp_p)
 
     learn_p = sub.add_parser("learn", help="tune tracker settings per scenario; results go to a rule book")
@@ -120,10 +148,16 @@ def main(argv: list[str] | None = None) -> int:
     learn_p.add_argument("--max-candidates", type=_positive_int, default=4)
     learn_p.add_argument("--rules", type=Path, default=DEFAULT_RULES_PATH)
     learn_p.add_argument("--log", type=Path, default=DEFAULT_LOG_PATH)
+    learn_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
     learn_p.set_defaults(func=_learn, parser=learn_p)
 
     args = parser.parse_args(argv)
-    return args.func(args) or 0
+    try:
+        return args.func(args) or 0
+    except BrokenProcessPool:
+        print("error: a worker process stopped unexpectedly, usually because the machine ran out of memory. "
+              "Run again with fewer --workers, or --workers 1.", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
