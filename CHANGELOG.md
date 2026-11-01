@@ -25,6 +25,11 @@ All notable changes to this project are recorded here. The format follows
   cross-check. Tests require it and the NumPy tracker to make the same decision about every measurement and to
   agree within 1e-9 ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)).
 - `airspace-fusion --version`.
+- Type checking: mypy runs over the package in CI (new `types` job, mypy pinned) and passes. Only the untyped
+  third-party packages (SciPy, Stone Soup, Plotly, pandas) are exempt from import checks; settings are in
+  `pyproject.toml`.
+- `Measurement.covariance()` and `Measurement.angular_std()` return the uncertainty in the form the tracker
+  needs and raise `ValueError` if the measurement carries the other kind.
 - Versioning: the package version is defined once, in `airspace_fusion.__version__`. `ci/release.py`
   checks that `CITATION.cff` and this changelog agree with it and cuts releases.
 - Rule books record their JSON format version and the package version that wrote them. A rule book
@@ -40,6 +45,8 @@ All notable changes to this project are recorded here. The format follows
   going through Stone Soup. Results are unchanged (the golden regression passes as before); one run takes about
   60 ms instead of 330 ms. `SingleTargetTracker` internals now use `TrackState` instead of Stone Soup's
   `GaussianState`, and `AnalyticBearingModel` moved to `estimation_stonesoup`. Performance budgets are tightened.
+- `Estimate.position` and `Estimate.position_covariance` raise `ValueError` when there is no track instead of
+  returning `None`; check `has_track` first, as all existing callers already did.
 
 ### Fixed
 

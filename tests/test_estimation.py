@@ -279,3 +279,22 @@ def test_bearings_alone_do_not_keep_a_track_alive():
     assert all(has_track[1:last_position + int(CFG.max_coast_s) + 1])
     assert not any(has_track[last_position + int(CFG.max_coast_s) + 1:])
     assert any("B" in e.updated_sensors for e in result.estimates[last_position + 1:])
+
+
+def test_uncertainty_accessors_check_the_kind():
+    position, bearing = pos(0, 1.0, 2.0, std=3.0), brg(0, (0.0, 0.0), (100.0, 0.0), std=0.01)
+    np.testing.assert_allclose(position.covariance(), np.diag([9.0, 9.0]))
+    assert bearing.angular_std() == 0.01
+    with pytest.raises(ValueError, match="no angular uncertainty"):
+        position.angular_std()
+    with pytest.raises(ValueError, match="no covariance uncertainty"):
+        bearing.covariance()
+
+
+def test_position_of_missing_track_raises():
+    result = run_tracker([], grid(1), CFG)
+    (estimate,) = result.estimates
+    assert not estimate.has_track
+    for name in ("position", "position_covariance"):
+        with pytest.raises(ValueError, match="no track"):
+            getattr(estimate, name)

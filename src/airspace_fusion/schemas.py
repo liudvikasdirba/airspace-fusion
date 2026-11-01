@@ -125,6 +125,18 @@ class Measurement(BaseModel):
         ),
     )
 
+    def covariance(self) -> np.ndarray:
+        """The covariance of a measurement whose uncertainty is a covariance (e.g. POSITION_2D)."""
+        if not isinstance(self.measurement_uncertainty, CovarianceUncertainty):
+            raise ValueError(f"measurement {self.measurement_id} has no covariance uncertainty")
+        return self.measurement_uncertainty.as_array()
+
+    def angular_std(self) -> float:
+        """The one-sigma angular uncertainty of a direction measurement (e.g. BEARING_ONLY), in radians."""
+        if not isinstance(self.measurement_uncertainty, AngularUncertainty):
+            raise ValueError(f"measurement {self.measurement_id} has no angular uncertainty")
+        return self.measurement_uncertainty.std_rad
+
     @field_validator("timestamp_utc")
     @classmethod
     def _timezone_aware_utc(cls, value: datetime) -> datetime:

@@ -28,7 +28,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -38,7 +38,7 @@ from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict
 
 # Version of the rule book's JSON layout. Increase it on any incompatible change, so that an
 # old file fails to load with a clear error instead of being misread.
-RULE_BOOK_FORMAT = 1
+RULE_BOOK_FORMAT: Final = 1
 
 TARGET_CONTAINMENT = 0.95
 # Score penalty per unit of |containment - 0.95|: one percentage point costs as much as 5 % RMSE.
@@ -252,7 +252,7 @@ class RuleBook(BaseModel):
         for lesson in lessons:
             if not lesson.accepted:
                 continue
-            if lesson.action is LessonAction.SET_TRACKER:
+            if lesson.tracker is not None:  # exactly the set_tracker lessons (validated in Lesson)
                 trackers[lesson.scenario] = lesson.tracker
             elif lesson.scenario not in disabled:
                 disabled.append(lesson.scenario)

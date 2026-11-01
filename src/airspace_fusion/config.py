@@ -121,7 +121,7 @@ def default_primary(**overrides: object) -> SensorConfig:
         noise_std=25.0,
     )
     values.update(overrides)
-    return SensorConfig(**values)
+    return SensorConfig.model_validate(values)
 
 
 def default_secondary(**overrides: object) -> SensorConfig:
@@ -132,7 +132,7 @@ def default_secondary(**overrides: object) -> SensorConfig:
         noise_std=math.radians(0.5),
     )
     values.update(overrides)
-    return SensorConfig(**values)
+    return SensorConfig.model_validate(values)
 
 
 SCENARIOS: dict[str, ScenarioConfig] = {

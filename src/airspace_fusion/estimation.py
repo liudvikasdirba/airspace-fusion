@@ -123,13 +123,17 @@ class Estimate:
         return self.state is not None
 
     @property
-    def position(self) -> np.ndarray | None:
-        return None if self.state is None else self.state[POSITION_SLICE].copy()
+    def position(self) -> np.ndarray:
+        """Estimated ``[x, y]``. Raises ValueError when there is no track: check ``has_track`` first."""
+        if self.state is None:
+            raise ValueError(f"no track at {self.timestamp}")
+        return self.state[POSITION_SLICE].copy()
 
     @property
-    def position_covariance(self) -> np.ndarray | None:
+    def position_covariance(self) -> np.ndarray:
+        """2x2 covariance of ``position``. Raises ValueError when there is no track."""
         if self.covariance is None:
-            return None
+            raise ValueError(f"no track at {self.timestamp}")
         return self.covariance[POSITION_SLICE, POSITION_SLICE].copy()
 
 
@@ -202,7 +206,7 @@ class SingleTargetTracker:
         x = prior.mean
         if m.measurement_type is MeasurementType.POSITION_2D:
             jacobian = POSITION_MATRIX
-            noise = m.measurement_uncertainty.as_array()
+            noise = m.covariance()
             vector = np.array(m.measurement_value) - x[POSITION_SLICE]
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
             dx, dy = x[0] - m.sensor_position[0], x[2] - m.sensor_position[1]
@@ -210,7 +214,7 @@ class SingleTargetTracker:
             if r2 == 0.0:
                 raise FloatingPointError("bearing Jacobian undefined at the sensor position")
             jacobian = np.array([[-dy / r2, 0.0, dx / r2, 0.0]])  # exact derivative of atan2
-            noise = np.array([[m.measurement_uncertainty.std_rad**2]])
+            noise = np.array([[m.angular_std() ** 2]])
             vector = np.array([wrap_angle(m.measurement_value[0] - math.atan2(dy, dx))])
         else:  # guarded by the caller; never reinterpret another type
             raise ValueError(f"unsupported measurement type {m.measurement_type}")
@@ -283,8 +287,8 @@ class SingleTargetTracker:
         )
         z = np.concatenate([a.measurement_value, b.measurement_value])
         r = np.zeros((4, 4))
-        r[:2, :2] = a.measurement_uncertainty.as_array()
-        r[2:, 2:] = b.measurement_uncertainty.as_array()
+        r[:2, :2] = a.covariance()
+        r[2:, 2:] = b.covariance()
         state = TrackState(mapping @ z, mapping @ r @ mapping.T, b.timestamp_utc)
         self._check_state(state)
         return state, a, b

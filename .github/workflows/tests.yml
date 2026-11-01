@@ -20,6 +20,19 @@ jobs:
       - run: python -m ruff check .
       - run: python ci/release.py --check  # __init__.py, CITATION.cff and CHANGELOG.md agree
 
+  types:
+    name: types (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Pinned mypy, and dependencies from the lock: new releases of either change what mypy reports.
+      - run: python -m pip install -e . mypy==2.4.1 -c requirements.txt
+      - run: python -m mypy  # settings in pyproject.toml
+
   coverage:
     name: coverage / ubuntu / py3.12
     runs-on: ubuntu-latest

@@ -117,6 +117,13 @@ class ScenarioWork:
     def modes(self) -> tuple[Mode, ...]:
         return scored_modes(self.fusion_enabled)
 
+    @property
+    def train_summary(self) -> ComparisonSummary:
+        """The training evaluation; the research agent's diagnosis must have run first."""
+        if self.train is None:
+            raise RuntimeError(f"{self.name}: no training evaluation yet")
+        return self.train
+
 
 @dataclass(frozen=True)
 class StepContext:
@@ -148,7 +155,7 @@ class ExperimentAgent:
 
     def screen(self, work: ScenarioWork, ctx: StepContext) -> None:
         # Results are committed only after every candidate ran, so a retried step does not duplicate lessons.
-        incumbent_score = score(work.train, work.modes)
+        incumbent_score = score(work.train_summary, work.modes)
         losers: list[Lesson] = []
         best: tuple[float, TrackerConfig] | None = None
         for candidate in work.candidates:
@@ -188,7 +195,7 @@ class QAAgent:
         )
         # Tune for the baseline only from here on: chasing a harmful sensor's containment is pointless.
         # Everything is computed before anything is committed, so a retried step cannot record the lesson twice.
-        gaps = find_gaps(work.train, scored_modes(False)) if confirmed else work.gaps
+        gaps = find_gaps(work.train_summary, scored_modes(False)) if confirmed else work.gaps
         work.lessons.append(lesson)
         if confirmed:
             work.fusion_enabled = False
