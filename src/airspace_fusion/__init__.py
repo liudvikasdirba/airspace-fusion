@@ -1,4 +1,4 @@
 """Simulation-only single-object multi-sensor tracking demonstrator."""
 
 # Single source of the package version (pyproject.toml reads it). Change it with ci/release.py.
-__version__ = "0.3.0"
+__version__ = "0.4.0"

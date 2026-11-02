@@ -8,6 +8,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+M2 finished: scenario families that draw a different world for each seed, TOML scenario files, a `sweep`
+command, results files that `reproduce` can re-run, the GOSPA metric and a rolling NIS consistency chart. Fusion
+improves at every crossing angle from 5 to 90 deg, with a nearly flat gain.
+
 ### Added
 
 - GOSPA metric (`gospa_m`): root mean square over all scans of single-object GOSPA with p = 2, α = 2 and a 150 m
