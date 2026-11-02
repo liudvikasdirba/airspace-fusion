@@ -298,3 +298,30 @@ def test_position_of_missing_track_raises():
     for name in ("position", "position_covariance"):
         with pytest.raises(ValueError, match="no track"):
             getattr(estimate, name)
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_unrolled_cholesky_matches_numpy(seed):
+    rng = np.random.default_rng(seed)
+    a = rng.normal(size=(4, 4)) * rng.uniform(0.01, 100.0)
+    # Mix positive definite, nearly singular and indefinite symmetric matrices.
+    shift = rng.choice([1.0, 1e-12, -0.5]) * np.eye(4) * rng.uniform(0.1, 10.0)
+    p = a @ a.T + shift
+    p = (p + p.T) / 2
+    try:
+        np.linalg.cholesky(p)
+        expected = True
+    except np.linalg.LinAlgError:
+        expected = False
+    assert estimation.is_positive_definite(p) is expected
+    assert estimation.is_positive_definite(np.full((4, 4), np.nan)) is False
+
+
+@pytest.mark.parametrize("p", [0.9, 0.95, 0.99, 0.997, 0.999, 0.9999])
+@pytest.mark.parametrize("dof", [1, 2])
+def test_closed_form_chi2_quantile_matches_scipy(p, dof):
+    from scipy.stats import chi2
+
+    assert estimation.chi2_quantile(p, dof) == pytest.approx(float(chi2.ppf(p, dof)), rel=1e-12)
+    with pytest.raises(ValueError, match="degrees of freedom"):
+        estimation.chi2_quantile(p, 3)

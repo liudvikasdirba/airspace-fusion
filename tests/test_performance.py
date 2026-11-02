@@ -1,7 +1,8 @@
 """Performance budgets (L9; slow). Best-of-N wall time with generous limits to tolerate slower machines.
 
-Reference timings on the development machine with the NumPy tracker: single run (both modes) ~60 ms;
-20-seed x 4-scenario compare ~5 s of work in one process; heavy clutter ~0.17 s; ~0.14 ms per scan.
+Reference timings on the development machine (4-core i5-10300H) with the NumPy tracker: single run (both modes)
+~50 ms; 20-seed x 4-scenario compare ~4 s of work in one process; heavy clutter ~0.17 s; ~0.13 ms per scan.
+Per-seed times are recorded over time by ``test_benchmark.py``.
 Budgets leave about six times that, for shared CI runners and older dependency versions.
 """
 
@@ -56,4 +57,4 @@ def test_tracker_time_per_scan():
     measurements, _ = parse_records(sim.records)
     result = run_tracker(measurements, sim.report_times, TrackerConfig())
     per_scan_ms = result.processing_time_s / len(sim.report_times) * 1000.0
-    assert per_scan_ms < 1.0, per_scan_ms  # ~0.14 ms on the development machine with both sensors
+    assert per_scan_ms < 1.0, per_scan_ms  # ~0.13 ms on the development machine with both sensors

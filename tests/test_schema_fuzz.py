@@ -11,7 +11,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from airspace_fusion.schemas import Measurement, MeasurementType, parse_records, wrap_angle
+from airspace_fusion.schemas import (
+    SYMMETRY_RELATIVE_TOLERANCE,
+    Measurement,
+    MeasurementType,
+    _check_covariance,
+    parse_records,
+    wrap_angle,
+)
 
 UTC = timezone.utc
 FIELDS = list(Measurement.model_fields)
@@ -188,3 +195,50 @@ def test_fixed_offsets_rejected(minutes):
     ts = datetime(2026, 1, 1, tzinfo=timezone(timedelta(minutes=minutes)))
     with pytest.raises(ValidationError, match="UTC"):
         Measurement.model_validate(position_with(((1.0, 0.0), (0.0, 1.0))) | {"timestamp_utc": ts})
+
+
+# -- the closed-form 2x2 covariance check decides exactly like the general NumPy path -----------
+
+def numpy_verdict(matrix: tuple[tuple[float, ...], ...]) -> str:
+    array = np.asarray(matrix, dtype=float)
+    if not np.all(np.isfinite(array)):
+        return "non-finite"
+    scale = float(np.max(np.abs(np.diag(array))))
+    if float(np.max(np.abs(array - array.T))) > SYMMETRY_RELATIVE_TOLERANCE * scale:
+        return "symmetric"
+    try:
+        np.linalg.cholesky(array)
+    except np.linalg.LinAlgError:
+        return "positive definite"
+    return "ok"
+
+
+def fast_verdict(matrix: tuple[tuple[float, ...], ...]) -> str:
+    try:
+        _check_covariance.__wrapped__(matrix)  # bypass the cache
+    except ValueError as exc:
+        return next(k for k in ("non-finite", "symmetric", "positive definite") if k in str(exc))
+    return "ok"
+
+
+entry = st.one_of(st.floats(-1e6, 1e6), st.sampled_from([0.0, -0.0, 1e-300, math.inf, math.nan]))
+
+
+@given(entry, entry, entry, entry, st.booleans())
+@settings(max_examples=500)
+def test_closed_form_2x2_check_matches_numpy(a, b, c, d, force_symmetric):
+    matrix = ((a, b), (b if force_symmetric else c, d))
+    fast, slow = fast_verdict(matrix), numpy_verdict(matrix)
+    if fast != slow:
+        # Only a matrix that is singular to within rounding may be decided differently (both are valid answers).
+        (p, q), (r, s) = matrix
+        assert {fast, slow} == {"ok", "positive definite"}, (matrix, fast, slow)
+        assert abs(p * s - q * r) <= 1e-12 * max(abs(p * s), abs(q * r)), (matrix, fast, slow)
+
+
+def test_covariance_arrays_are_shared_and_read_only():
+    m1 = Measurement.model_validate(position_with(((4.0, 0.0), (0.0, 4.0))))
+    m2 = Measurement.model_validate(position_with(((4.0, 0.0), (0.0, 4.0))) | {"measurement_id": "other"})
+    assert m1.covariance() is m2.covariance()
+    with pytest.raises(ValueError, match="read-only"):
+        m1.covariance()[0, 0] = 1.0

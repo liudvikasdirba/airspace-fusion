@@ -7,6 +7,7 @@ Every number is computed from an actual simulation run.
 from __future__ import annotations
 
 import math
+import os
 import sys
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
@@ -16,15 +17,14 @@ from enum import Enum
 from itertools import repeat
 
 import numpy as np
-from scipy import stats
 
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
-from airspace_fusion.estimation import TrackerResult, run_tracker
+from airspace_fusion.estimation import TrackerResult, chi2_quantile, run_tracker
 from airspace_fusion.schemas import Measurement, RejectedRecord, parse_records
 from airspace_fusion.simulator import GroundTruth, SimulationOutput, simulate
 
 # 95 % probability contour of a 2D Gaussian (chi-square, 2 dof).
-CHI2_2DOF_95 = float(stats.chi2.ppf(0.95, 2))
+CHI2_2DOF_95 = chi2_quantile(0.95, 2)
 # Relative RMSE change below which a difference is not considered material.
 MATERIAL_RELATIVE_CHANGE = 0.05
 SIGNIFICANCE_LEVEL = 0.05
@@ -33,6 +33,7 @@ MIN_PARALLEL_SEEDS = 4
 # Seeds per comparison are sent to workers in about this many batches: few enough that the scenario and
 # tracker are not pickled once per seed, enough to keep every worker busy until the end.
 PARALLEL_BATCHES = 64
+BLAS_THREAD_VARIABLES = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
 # ProcessPoolExecutor refuses more workers than this on Windows.
 MAX_WORKERS = 61 if sys.platform == "win32" else None
 
@@ -65,16 +66,24 @@ def evaluate_run(
     result: TrackerResult, truth: GroundTruth, invalid_count: int, primary_sensor_id: str
 ) -> RunMetrics:
     truth_index = {t: i for i, t in enumerate(truth.timestamps)}
+    truth_xy = truth.positions_m.tolist()
     sq_errors: list[float] = []
     contained = 0
     for est in result.estimates:
         if est.timestamp not in truth_index:
             raise ValueError(f"estimate at {est.timestamp} has no ground-truth sample")
-        if not est.has_track:
+        if est.state is None or est.covariance is None:
             continue
-        error = est.position - truth.positions_m[truth_index[est.timestamp]]
-        sq_errors.append(float(error @ error))
-        if float(error @ np.linalg.solve(est.position_covariance, error)) <= CHI2_2DOF_95:
+        # Plain floats and a closed-form 2x2 inverse: per estimate, NumPy's call overhead dominates the work.
+        tx, ty = truth_xy[truth_index[est.timestamp]]
+        ex, ey = float(est.state[0]) - tx, float(est.state[2]) - ty
+        sq_errors.append(ex * ex + ey * ey)
+        p = est.covariance
+        a, b, d = float(p[0, 0]), float(p[0, 2]), float(p[2, 2])
+        det = a * d - b * b
+        if not det > 0.0:
+            raise FloatingPointError(f"position covariance at {est.timestamp} is not positive definite")
+        if (d * ex * ex - 2.0 * b * ex * ey + a * ey * ey) / det <= CHI2_2DOF_95:
             contained += 1
     n_est = len(sq_errors)
     n_total = len(result.estimates)
@@ -172,6 +181,8 @@ def paired_verdict(
         # (it would return NaN), but the change is certain rather than insignificant.
         half, p_value = 0.0, 0.0
     else:
+        from scipy import stats  # imported here so that worker processes, which never need it, start faster
+
         sem = float(d.std(ddof=1)) / math.sqrt(d.size)
         half = float(stats.t.ppf(0.975, d.size - 1)) * sem
         p_value = float(stats.ttest_rel(f, b).pvalue)
@@ -206,12 +217,16 @@ def seed_executor(workers: int, seeds_per_comparison: int) -> Iterator[Executor 
     """A process pool for ``compare_modes``, or None when running serially is cheaper.
 
     Create it once per command and pass it to every comparison: starting the worker processes takes
-    a moment, because each one imports NumPy, SciPy and pydantic.
+    a moment, because each one imports NumPy and pydantic.
     """
     if workers < 2 or seeds_per_comparison < MIN_PARALLEL_SEEDS:
         yield None
         return
     workers = min(workers, seeds_per_comparison, MAX_WORKERS or workers)
+    # The tracker multiplies 4x4 matrices: BLAS threads cannot help there, and with several workers they only
+    # compete for the same cores. Workers inherit this environment; a value the user set is kept.
+    for variable in BLAS_THREAD_VARIABLES:
+        os.environ.setdefault(variable, "1")
     executor = ProcessPoolExecutor(max_workers=workers)
     try:
         yield executor
