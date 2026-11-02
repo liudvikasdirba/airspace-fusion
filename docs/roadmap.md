@@ -17,7 +17,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | Milestone | Status (1 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
-| M1 Fast and parallel | **Done** 2 November, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. 0.3.0 can be cut. |
+| M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 – M8 | Not started. |
 
 ## Where the project stands
@@ -134,7 +134,7 @@ Exit criteria:
 **Goal:** make large experiments cheap, so that later verdicts can rest on hundreds or thousands of seeds.
 
 Status: **done on 2 November 2026.** Most deliverables shipped in 0.2.0; the benchmark and the speed work followed.
-The two speed targets were revised (see [Decision](#m1-decision-2-november-2026)); 0.3.0 can be cut.
+The two speed targets were revised (see [Decision](#m1-decision-2-november-2026)). Released as 0.3.0 on 2 November.
 
 Deliverables:
 - [x] A plain NumPy tracker kernel with the same behaviour as the current one (same gating, selection, initiation,
