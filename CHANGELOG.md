@@ -36,6 +36,9 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- Roadmap: M2 is done. Its crossing-angle exit criterion now reports what the sweep showed (fusion improves at every
+  angle; the gain is nearly flat) instead of expecting the gain to rise, with the reason. The README has a "Fusion
+  gain against crossing angle" section with a 100-seed sweep.
 - `--scenario` names are checked after parsing, because scenario files add names: an unknown name now gives
   "unknown scenario" instead of argparse's "invalid choice". `all` still means the four built-in scenarios.
 - New dependency on Python 3.10 only: `tomli>=1.1.0` (Python 3.11+ reads TOML with the standard library).
