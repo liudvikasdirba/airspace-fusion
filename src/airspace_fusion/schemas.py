@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 from enum import Enum
+from functools import lru_cache
 from typing import Annotated, Any, Literal
 
 import numpy as np
@@ -55,6 +56,48 @@ def wrap_angle(angle_rad: float) -> float:
     return -math.pi if wrapped >= math.pi else wrapped
 
 
+@lru_cache(maxsize=1024)
+def _check_covariance(matrix: tuple[tuple[float, ...], ...]) -> None:
+    """Raise ValueError unless ``matrix`` is a finite, symmetric, positive-definite square matrix.
+
+    Cached, because a sensor repeats the same few matrices: each distinct matrix is checked once.
+    """
+    if len(matrix) == 2 and len(matrix[0]) == 2 and len(matrix[1]) == 2:
+        # Closed form for 2x2, the only size the measurement types use: NumPy's call overhead dominates here.
+        (a, b), (c, d) = matrix
+        if not (math.isfinite(a) and math.isfinite(b) and math.isfinite(c) and math.isfinite(d)):
+            raise ValueError("covariance contains non-finite values")
+        if abs(b - c) > SYMMETRY_RELATIVE_TOLERANCE * max(abs(a), abs(d)):
+            raise ValueError("covariance must be symmetric")
+        # Cholesky factorisation of the lower triangle (square root, then divide), as for the 4x4 state check.
+        # Matrices that are singular to within rounding may be decided differently from NumPy; any other agrees.
+        if not a > 0.0:
+            raise ValueError("covariance must be positive definite")
+        l21 = c / math.sqrt(a)
+        if not d - l21 * l21 > 0.0:
+            raise ValueError("covariance must be positive definite")
+        return
+    array = np.asarray(matrix, dtype=float)
+    if array.ndim != 2 or array.shape[0] != array.shape[1] or array.shape[0] == 0:
+        raise ValueError(f"covariance must be a non-empty square matrix, got shape {array.shape}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError("covariance contains non-finite values")
+    scale = float(np.max(np.abs(np.diag(array))))
+    if float(np.max(np.abs(array - array.T))) > SYMMETRY_RELATIVE_TOLERANCE * scale:
+        raise ValueError("covariance must be symmetric")
+    try:
+        np.linalg.cholesky(array)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError("covariance must be positive definite") from exc
+
+
+@lru_cache(maxsize=1024)
+def _matrix_array(matrix: tuple[tuple[float, ...], ...]) -> np.ndarray:
+    array = np.array(matrix, dtype=float)
+    array.flags.writeable = False  # shared between all measurements with this matrix
+    return array
+
+
 class CovarianceUncertainty(BaseModel):
     """Gaussian covariance in the units of the measurement vector (squared)."""
 
@@ -66,22 +109,12 @@ class CovarianceUncertainty(BaseModel):
     @field_validator("matrix")
     @classmethod
     def _valid_covariance(cls, matrix: tuple[tuple[float, ...], ...]) -> tuple[tuple[float, ...], ...]:
-        array = np.asarray(matrix, dtype=float)
-        if array.ndim != 2 or array.shape[0] != array.shape[1] or array.shape[0] == 0:
-            raise ValueError(f"covariance must be a non-empty square matrix, got shape {array.shape}")
-        if not np.all(np.isfinite(array)):
-            raise ValueError("covariance contains non-finite values")
-        scale = float(np.max(np.abs(np.diag(array))))
-        if float(np.max(np.abs(array - array.T))) > SYMMETRY_RELATIVE_TOLERANCE * scale:
-            raise ValueError("covariance must be symmetric")
-        try:
-            np.linalg.cholesky(array)
-        except np.linalg.LinAlgError as exc:
-            raise ValueError("covariance must be positive definite") from exc
+        _check_covariance(matrix)
         return matrix
 
     def as_array(self) -> np.ndarray:
-        return np.asarray(self.matrix, dtype=float)
+        """The matrix as a read-only array, shared by every measurement with the same matrix."""
+        return _matrix_array(self.matrix)
 
 
 class AngularUncertainty(BaseModel):

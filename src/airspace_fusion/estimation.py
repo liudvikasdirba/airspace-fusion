@@ -40,9 +40,9 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from statistics import NormalDist
 
 import numpy as np
-from scipy.stats import chi2
 
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
@@ -53,6 +53,19 @@ SUPPORTED_TYPES = (MeasurementType.POSITION_2D, MeasurementType.BEARING_ONLY)
 # Bearing linearisation is unreliable when the predicted target is this close to the
 # bearing sensor relative to the position uncertainty (in standard deviations).
 MIN_BEARING_RANGE_SIGMAS = 3.0
+
+
+def chi2_quantile(probability: float, dof: int) -> float:
+    """Chi-square quantile for 1 or 2 degrees of freedom, in closed form.
+
+    Avoids importing ``scipy.stats``, which costs worker processes about 1.5 s at start-up. Agrees with
+    ``scipy.stats.chi2.ppf`` to about 1e-14 for the gate probabilities used.
+    """
+    if dof == 1:  # the square of a standard normal quantile; the upper tail keeps precision as p -> 1
+        return NormalDist().inv_cdf((1.0 - probability) / 2.0) ** 2
+    if dof == 2:  # exponential with mean 2
+        return -2.0 * math.log1p(-probability)
+    raise ValueError(f"no closed-form chi-square quantile for {dof} degrees of freedom")
 
 
 POSITION_MATRIX = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]])
@@ -95,6 +108,39 @@ def small_inverse(s: np.ndarray) -> np.ndarray:
     if not det > 0.0:  # an innovation covariance is positive definite; also catches NaN
         raise FloatingPointError("innovation covariance is not positive definite")
     return np.array([[d, -b], [-c, a]]) / det
+
+
+def is_positive_definite(matrix: np.ndarray) -> bool:
+    """True if a Cholesky factorisation of the lower triangle succeeds, as with ``numpy.linalg.cholesky``.
+
+    The 4x4 state covariance is factorised in unrolled plain Python, about four times faster than
+    NumPy's call overhead; other sizes use NumPy.
+    """
+    if matrix.shape != (4, 4):
+        try:
+            np.linalg.cholesky(matrix)
+        except np.linalg.LinAlgError:
+            return False
+        return True
+    return _cholesky_succeeds_4x4(matrix.tolist())
+
+
+def _cholesky_succeeds_4x4(rows: list[list[float]]) -> bool:
+    (a00, _, _, _), (a10, a11, _, _), (a20, a21, a22, _), (a30, a31, a32, a33) = rows
+    if not a00 > 0.0:  # "not >" also rejects NaN
+        return False
+    l00 = math.sqrt(a00)
+    l10, l20, l30 = a10 / l00, a20 / l00, a30 / l00
+    pivot = a11 - l10 * l10
+    if not pivot > 0.0:
+        return False
+    l11 = math.sqrt(pivot)
+    l21, l31 = (a21 - l20 * l10) / l11, (a31 - l30 * l10) / l11
+    pivot = a22 - l20 * l20 - l21 * l21
+    if not pivot > 0.0:
+        return False
+    l32 = (a32 - l30 * l20 - l31 * l21) / math.sqrt(pivot)
+    return a33 - l30 * l30 - l31 * l31 - l32 * l32 > 0.0
 
 
 class Disposition:
@@ -176,7 +222,7 @@ class SingleTargetTracker:
         self.config = config
         self.max_coast = timedelta(seconds=config.max_coast_s)
         # Chi-square gate thresholds by measurement dimension (1 = bearing, 2 = position).
-        self.gate_thresholds = {dof: float(chi2.ppf(config.gate_probability, dof)) for dof in (1, 2)}
+        self.gate_thresholds = {dof: chi2_quantile(config.gate_probability, dof) for dof in (1, 2)}
         self._transitions: dict[float, tuple[np.ndarray, np.ndarray]] = {}
 
     # -- filter steps -----------------------------------------------------------
@@ -204,9 +250,12 @@ class SingleTargetTracker:
     def _innovation(self, prior: TrackState, m: Measurement) -> Innovation:
         x = prior.mean
         if m.measurement_type is MeasurementType.POSITION_2D:
-            jacobian = POSITION_MATRIX
+            # H selects x and y, so P H^T and H P H^T are slices of P: the same numbers, without matrix products.
             noise = m.covariance()
             vector = np.array(m.measurement_value) - x[POSITION_SLICE]
+            cross_covar = prior.covar[:, POSITION_SLICE]
+            covar = cross_covar[POSITION_SLICE] + noise
+            return Innovation(vector, POSITION_MATRIX, noise, cross_covar, small_inverse(covar))
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
             dx, dy = x[0] - m.sensor_position[0], x[2] - m.sensor_position[1]
             r2 = dx * dx + dy * dy
@@ -247,13 +296,13 @@ class SingleTargetTracker:
 
     @staticmethod
     def _check_state(state: TrackState) -> None:
-        # A sum is finite only if every term is (the values are nowhere near overflow); cheaper than isfinite.
-        if not math.isfinite(float(state.mean.sum() + state.covar.sum())):
+        # Plain floats: for 4 + 16 values, NumPy reductions cost more in call overhead than in work.
+        rows = state.covar.tolist()
+        values = [*state.mean.tolist(), *rows[0], *rows[1], *rows[2], *rows[3]]
+        if not all(map(math.isfinite, values)):
             raise FloatingPointError("non-finite state or covariance after update")
-        try:
-            np.linalg.cholesky(state.covar)
-        except np.linalg.LinAlgError as exc:
-            raise FloatingPointError("state covariance lost positive definiteness") from exc
+        if not _cholesky_succeeds_4x4(rows):
+            raise FloatingPointError("state covariance lost positive definiteness")
 
     # -- initiation ----------------------------------------------------------
 

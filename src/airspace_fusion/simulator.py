@@ -49,26 +49,28 @@ def scan_times(scenario: ScenarioConfig) -> tuple[datetime, ...]:
 
 def simulate_truth(scenario: ScenarioConfig, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     """Integrate the target motion on the scan grid. Returns positions and velocities, each (N, 2)."""
+    # Plain floats: the same IEEE operations in the same order as on 2-element arrays, so results are
+    # bit-identical, without NumPy's per-call overhead on every step.
     dt = scenario.time_step_s
     n = scenario.num_steps
-    pos = np.zeros((n, 2))
-    vel = np.zeros((n, 2))
-    pos[0] = scenario.initial_position_m
-    vel[0] = scenario.initial_velocity_mps
+    angle = scenario.turn_rate_rad_s * dt
+    c, s = math.cos(angle), math.sin(angle)
+    px, py = (float(v) for v in scenario.initial_position_m)
+    vx, vy = (float(v) for v in scenario.initial_velocity_mps)
+    pos, vel = [(px, py)], [(vx, vy)]
     for k in range(1, n):
         t_prev = (k - 1) * dt
-        v = vel[k - 1]
         if scenario.turn_start_s <= t_prev < scenario.turn_end_s:
-            angle = scenario.turn_rate_rad_s * dt
-            c, s = math.cos(angle), math.sin(angle)
-            v_new = np.array([c * v[0] - s * v[1], s * v[0] + c * v[1]])
+            nvx, nvy = c * vx - s * vy, s * vx + c * vy
         else:
-            v_new = v.copy()
-        accel = rng.normal(0.0, scenario.random_acceleration_std_mps2, size=2)
-        v_new = v_new + accel * dt
-        pos[k] = pos[k - 1] + 0.5 * (v + v_new) * dt
-        vel[k] = v_new
-    return pos, vel
+            nvx, nvy = vx, vy
+        ax, ay = rng.normal(0.0, scenario.random_acceleration_std_mps2, size=2).tolist()
+        nvx, nvy = nvx + ax * dt, nvy + ay * dt
+        px, py = px + 0.5 * (vx + nvx) * dt, py + 0.5 * (vy + nvy) * dt
+        vx, vy = nvx, nvy
+        pos.append((px, py))
+        vel.append((vx, vy))
+    return np.array(pos), np.array(vel)
 
 
 def _record(
@@ -93,10 +95,11 @@ def _record(
 
 
 def _true_value(sensor: SensorConfig, target_xy: np.ndarray, rng: np.random.Generator) -> tuple[float, ...]:
+    tx, ty = float(target_xy[0]), float(target_xy[1])
     if sensor.measurement_type is MeasurementType.POSITION_2D:
-        noise = rng.normal(0.0, sensor.noise_std, size=2) + sensor.bias
-        return (float(target_xy[0] + noise[0]), float(target_xy[1] + noise[1]))
-    dx, dy = target_xy - np.asarray(sensor.position_m)
+        nx, ny = rng.normal(0.0, sensor.noise_std, size=2).tolist()
+        return (tx + (nx + sensor.bias), ty + (ny + sensor.bias))
+    dx, dy = tx - sensor.position_m[0], ty - sensor.position_m[1]
     bearing = math.atan2(dy, dx) + sensor.bias + rng.normal(0.0, sensor.noise_std)
     return (wrap_angle(bearing),)
 

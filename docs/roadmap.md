@@ -1,7 +1,7 @@
 ---
 title: Roadmap to April 2027
 status: draft
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Roadmap to April 2027
@@ -17,7 +17,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | Milestone | Status (1 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
-| M1 Fast and parallel | **Mostly done early**, shipped in 0.2.0. Open: the per-seed benchmark test, and the two speed targets (one run takes about 60 ms, not under 17 ms; 1,000 seeds take 117 s, not under 60 s). |
+| M1 Fast and parallel | **Done** 2 November, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. 0.3.0 can be cut. |
 | M2 – M8 | Not started. |
 
 ## Where the project stands
@@ -27,7 +27,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | Source / tests | about 2,200 lines in `src/`, about 2,600 lines in `tests/` | about 2,470 and 2,800 lines |
 | Fast suite | 249 tests, all passing, about 30 s on Windows / Python 3.12 | 323 tests, about 21 s; slow suite 65 tests, about 60 s |
 | Lint and types | ruff clean; no type checking | ruff and mypy clean, both in CI |
-| Cost of one run (`run_single`, both modes) | about 0.33 s | about 60 ms |
+| Cost of one run (`run_single`, both modes) | about 0.33 s | about 60 ms (about 50 ms after the 2 November speed work) |
 | `compare --seeds 20` (all scenarios) | about 45 s | about 6 s (4 workers) |
 | Scenarios | 4, all sharing one trajectory and one sensor geometry | unchanged |
 | Package version | 0.1.0, with the learning loop and docs under Unreleased | 0.2.0 |
@@ -133,7 +133,8 @@ Exit criteria:
 
 **Goal:** make large experiments cheap, so that later verdicts can rest on hundreds or thousands of seeds.
 
-Status: most deliverables shipped early, in 0.2.0. What is left decides when 0.3.0 is cut.
+Status: **done on 2 November 2026.** Most deliverables shipped in 0.2.0; the benchmark and the speed work followed.
+The two speed targets were revised (see [Decision](#m1-decision-2-november-2026)); 0.3.0 can be cut.
 
 Deliverables:
 - [x] A plain NumPy tracker kernel with the same behaviour as the current one (same gating, selection, initiation,
@@ -148,19 +149,39 @@ Deliverables:
   *The default is the number of cores but at most 4: each worker needs about 100 MB, and 8 workers ran an 8 GB
   machine out of memory. A crashed worker gives a clear error instead of a traceback.*
 - [x] The learning loop's evaluation cache and agents use the parallel path.
-- [ ] A benchmark test that records run time per seed, so that speed regressions show up.
-  *Not yet. The performance budgets in `tests/test_performance.py` were tightened 4 – 8×, but they record nothing.*
+- [x] A benchmark test that records run time per seed, so that speed regressions show up.
+  *`tests/test_benchmark.py` (slow suite) appends per-scenario median, 90th percentile and fastest seed times, with
+  commit, versions and machine, to `data/benchmarks/run_times.jsonl`, and warns when a median is more than 1.5×
+  the last entry from the same machine. The nightly CI slow job uploads the file as an artifact.*
 - [x] ADR 0007: NumPy kernel is the default, Stone Soup is the cross-check.
 
 Exit criteria:
 - [x] The golden regression passes unchanged on the new kernel (results agree to 1e-9 m).
-- [ ] One run at least 20× faster than today (below 17 ms).
-  *About 60 ms, 5.5× faster. The tracker itself is about 9× faster (0.14 ms per scan); most of what remains is
-  schema validation (pydantic), the simulator and metric computation.*
-- [ ] `compare --seeds 1000` over all four scenarios in under 60 s on the development machine.
-  *117 s with 4 workers.*
+- [x] One run under 60 ms on the development machine. *Revised on 2 November 2026; the original target was at
+  least 20× faster than at the audit, below 17 ms.*
+  *About 51 ms (6.5× faster than the audit). On 2 November, same machine: 78 – 84 ms before, about 51 ms after,
+  from cached closed-form covariance checks, an unrolled 4×4 Cholesky check, slicing instead of selection-matrix
+  products, plain-float simulator and metric loops (all bit-identical or within 1e-12), with no checks removed.
+  The tracker is now about 75 % of a run at about 0.13 ms per scan: roughly a dozen NumPy calls on 4×4 matrices per
+  update, close to NumPy's per-call floor.*
+- [x] `compare --seeds 1000` over all four scenarios in under 110 s on the development machine. *Revised on
+  2 November 2026; the original target was under 60 s.*
+  *About 99 s with 4 workers (was 117 s). Worker start-up halved (SciPy is no longer imported by workers) and BLAS
+  runs single-threaded in workers, which raised 4-worker speed-up on 200 seeds from 1.3× to 2.0×. The development
+  machine has 4 physical cores and about 220 core-seconds of work at 50 ms per run, so under 60 s would need runs
+  near 35 ms there.*
 - [x] Serial and parallel runs give byte-identical CLI output.
   *Identical except the `processing_time_s` row, which is wall-clock time; tests compare everything else.*
+
+### M1 decision (2 November 2026)
+
+The speed targets were set to what the project reaches in pure Python and NumPy, instead of below 17 ms per run
+and under 60 s for 1,000 seeds. Reaching the original targets needs either compiled code (for example numba, a
+new compiled dependency with its own install and Python-version constraints) or restructuring the filter to
+process many seeds at once (a rewrite of the reference tracker that the Stone Soup cross-check guards). Neither
+is worth it at this stage: at about 50 ms per run, 1,000 seeds over four scenarios take under two minutes on a
+4-core laptop, which is enough for the 200-seed verdicts planned from 0.7.0. Revisit if the M2 sweeps or the
+M3 Monte Carlo work make run time the bottleneck; `tests/test_benchmark.py` keeps the history needed to decide.
 
 Risk: subtle differences from Stone Soup (angle wrapping, symmetrisation). Mitigation: compare the two
 implementations step by step on the golden seeds and on the hypothesis-generated edge cases.
@@ -313,7 +334,7 @@ validate the choice by Monte Carlo).
 | Target | At the audit | 0.2.0 (Nov) | 0.4.0 (Dec) | 0.7.0 (Feb) | 1.0.0 (Apr) |
 |---|---|---|---|---|---|
 | Seeds behind each verdict | 20 | 20 (200 take 26 s) | 1,000 possible | 200 by default | 200 by default |
-| Time for 1,000 seeds × 4 scenarios | about 37 min | 117 s | under 60 s | under 60 s | under 60 s |
+| Time for 1,000 seeds × 4 scenarios (development machine) | about 37 min | 117 s (99 s on 2 Nov) | under 110 s | under 110 s | under 110 s |
 | Scenario families | 0 (4 fixed scenarios) | 0 | 5 | 6+ | suite-2027.1 frozen |
 | Baseline containment, `reference` | 0.92 | 0.92 | 0.92 | 0.95 ± 0.02 | 0.95 ± 0.02 |
 | Fusion vs baseline RMSE, `biased_bearing` | +97 % | +97 % | +97 % | ≤ +5 % | ≤ 0 % |

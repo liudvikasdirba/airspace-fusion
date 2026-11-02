@@ -82,7 +82,7 @@ One seeded simulation, both modes:
 .venv/Scripts/python -m airspace_fusion.cli run --scenario reference --seed 0
 ```
 
-Multi-seed comparison over all scenarios (about 6 s for 20 seeds, 30 s for 200, 2 minutes for 1000). Use `--scenario NAME` for
+Multi-seed comparison over all scenarios (about 6 s for 20 seeds, 30 s for 200, 100 s for 1000 on a 4-core laptop). Use `--scenario NAME` for
 one scenario and `--first-seed N` to start from a different seed:
 
 ```bash
