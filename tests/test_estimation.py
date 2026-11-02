@@ -10,9 +10,16 @@ import pytest
 
 import airspace_fusion.estimation as estimation
 from airspace_fusion.config import SCENARIOS, TrackerConfig
-from airspace_fusion.estimation import Disposition, SingleTargetTracker, TrackState, run_tracker
+from airspace_fusion.estimation import (
+    Disposition,
+    SingleTargetTracker,
+    TrackerResult,
+    TrackState,
+    nis_series,
+    run_tracker,
+)
 from airspace_fusion.estimation_stonesoup import StoneSoupTracker
-from airspace_fusion.schemas import Measurement, parse_records
+from airspace_fusion.schemas import Measurement, MeasurementType, parse_records
 from airspace_fusion.simulator import simulate
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -325,3 +332,36 @@ def test_closed_form_chi2_quantile_matches_scipy(p, dof):
     assert estimation.chi2_quantile(p, dof) == pytest.approx(float(chi2.ppf(p, dof)), rel=1e-12)
     with pytest.raises(ValueError, match="degrees of freedom"):
         estimation.chi2_quantile(p, 3)
+
+
+def test_nis_series_rolling_mean_and_band():
+    from scipy import stats
+
+    positions = [pos(k, 0.0, 0.0) for k in range(5)]
+    bearings = [brg(k, (0.0, -1000.0), (0.0, 0.0)) for k in range(3)]
+    unused = pos(9, 0.0, 0.0)  # not accepted: absent from update_nis, so not in any series
+    nis = {m.measurement_id: 2.0 * (k + 1) for k, m in enumerate(positions)}
+    nis |= {m.measurement_id: float(k) for k, m in enumerate(bearings)}
+    result = TrackerResult([], {}, 1, 0.0, update_nis=nis)
+    # Shuffled input: series come out sorted by sensor and time.
+    series = nis_series(result, [*reversed(positions), unused, *bearings], window=2)
+    assert [(s.sensor_id, s.measurement_type, s.dof) for s in series] == [
+        ("B", MeasurementType.BEARING_ONLY, 1), ("P", MeasurementType.POSITION_2D, 2)]
+    bearing, position = series
+    np.testing.assert_allclose(position.nis_per_dof, [1.0, 2.0, 3.0, 4.0, 5.0])  # divided by dof = 2
+    assert position.timestamps == [at(k) for k in range(5)]
+    assert math.isnan(position.rolling_mean[0])
+    np.testing.assert_allclose(position.rolling_mean[1:], [1.5, 2.5, 3.5, 4.5])
+    np.testing.assert_allclose(bearing.rolling_mean[1:], [0.5, 1.5])
+    np.testing.assert_allclose(position.band, stats.chi2.ppf([0.025, 0.975], 4) / 4)
+    np.testing.assert_allclose(bearing.band, stats.chi2.ppf([0.025, 0.975], 2) / 2)
+
+
+def test_nis_series_short_and_invalid_windows():
+    m = pos(0, 0.0, 0.0)
+    result = TrackerResult([], {}, 1, 0.0, update_nis={m.measurement_id: 1.0})
+    (series,) = nis_series(result, [m], window=3)
+    assert np.isnan(series.rolling_mean).all()  # fewer values than the window
+    assert nis_series(TrackerResult([], {}, 0, 0.0), [m]) == []
+    with pytest.raises(ValueError):
+        nis_series(result, [m], window=0)

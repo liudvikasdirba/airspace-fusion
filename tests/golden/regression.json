@@ -5,6 +5,7 @@
     "baseline": {
      "containment_95": 0.9106145251396648,
      "coverage": 0.988950276243094,
+     "gospa_m": 21.708193595696432,
      "invalid_observations": 2,
      "missed_updates": 13,
      "position_rmse_m": 18.729993590640184,
@@ -15,6 +16,7 @@
     "fusion": {
      "containment_95": 0.24022346368715083,
      "coverage": 0.988950276243094,
+     "gospa_m": 37.418909685809666,
      "invalid_observations": 5,
      "missed_updates": 16,
      "position_rmse_m": 35.918252870216236,
@@ -27,6 +29,7 @@
     "baseline": {
      "containment_95": 0.9388888888888889,
      "coverage": 0.994475138121547,
+     "gospa_m": 18.193953204634028,
      "invalid_observations": 3,
      "missed_updates": 13,
      "position_rmse_m": 16.442595076245436,
@@ -37,6 +40,7 @@
     "fusion": {
      "containment_95": 0.38333333333333336,
      "coverage": 0.994475138121547,
+     "gospa_m": 31.879204684251576,
      "invalid_observations": 7,
      "missed_updates": 13,
      "position_rmse_m": 30.974662416362715,
@@ -49,6 +53,7 @@
     "baseline": {
      "containment_95": 0.9269662921348315,
      "coverage": 0.9834254143646409,
+     "gospa_m": 22.821901959007832,
      "invalid_observations": 1,
      "missed_updates": 21,
      "position_rmse_m": 18.439377873716616,
@@ -59,6 +64,7 @@
     "fusion": {
      "containment_95": 0.29213483146067415,
      "coverage": 0.9834254143646409,
+     "gospa_m": 37.81608425192251,
      "invalid_observations": 2,
      "missed_updates": 28,
      "position_rmse_m": 35.56053371135477,
@@ -71,6 +77,7 @@
     "baseline": {
      "containment_95": 0.8555555555555555,
      "coverage": 0.994475138121547,
+     "gospa_m": 22.310123913327928,
      "invalid_observations": 1,
      "missed_updates": 15,
      "position_rmse_m": 20.928613434731517,
@@ -81,6 +88,7 @@
     "fusion": {
      "containment_95": 0.3611111111111111,
      "coverage": 0.994475138121547,
+     "gospa_m": 33.26274572407698,
      "invalid_observations": 6,
      "missed_updates": 17,
      "position_rmse_m": 32.40458265018945,
@@ -93,6 +101,7 @@
     "baseline": {
      "containment_95": 0.9491525423728814,
      "coverage": 0.9779005524861878,
+     "gospa_m": 23.897875951219312,
      "invalid_observations": 4,
      "missed_updates": 25,
      "position_rmse_m": 18.15977954322429,
@@ -103,6 +112,7 @@
     "fusion": {
      "containment_95": 0.1807909604519774,
      "coverage": 0.9779005524861878,
+     "gospa_m": 47.95295217129106,
      "invalid_observations": 7,
      "missed_updates": 38,
      "position_rmse_m": 45.79535031609199,
@@ -117,6 +127,7 @@
     "baseline": {
      "containment_95": 0.9106145251396648,
      "coverage": 0.988950276243094,
+     "gospa_m": 21.708193595696432,
      "invalid_observations": 2,
      "missed_updates": 13,
      "position_rmse_m": 18.729993590640184,
@@ -127,6 +138,7 @@
     "fusion": {
      "containment_95": 0.9106145251396648,
      "coverage": 0.988950276243094,
+     "gospa_m": 21.66725693559869,
      "invalid_observations": 5,
      "missed_updates": 13,
      "position_rmse_m": 18.68200134379308,
@@ -139,6 +151,7 @@
     "baseline": {
      "containment_95": 0.9388888888888889,
      "coverage": 0.994475138121547,
+     "gospa_m": 18.193953204634028,
      "invalid_observations": 3,
      "missed_updates": 13,
      "position_rmse_m": 16.442595076245436,
@@ -149,6 +162,7 @@
     "fusion": {
      "containment_95": 0.9388888888888889,
      "coverage": 0.994475138121547,
+     "gospa_m": 18.162763191149644,
      "invalid_observations": 7,
      "missed_updates": 13,
      "position_rmse_m": 16.40788428021694,
@@ -161,6 +175,7 @@
     "baseline": {
      "containment_95": 0.9269662921348315,
      "coverage": 0.9834254143646409,
+     "gospa_m": 22.821901959007832,
      "invalid_observations": 1,
      "missed_updates": 21,
      "position_rmse_m": 18.439377873716616,
@@ -171,6 +186,7 @@
     "fusion": {
      "containment_95": 0.9269662921348315,
      "coverage": 0.9834254143646409,
+     "gospa_m": 22.795787596125646,
      "invalid_observations": 2,
      "missed_updates": 21,
      "position_rmse_m": 18.406501616827626,
@@ -183,6 +199,7 @@
     "baseline": {
      "containment_95": 0.8555555555555555,
      "coverage": 0.994475138121547,
+     "gospa_m": 22.310123913327928,
      "invalid_observations": 1,
      "missed_updates": 15,
      "position_rmse_m": 20.928613434731517,
@@ -193,6 +210,7 @@
     "fusion": {
      "containment_95": 0.8555555555555555,
      "coverage": 0.994475138121547,
+     "gospa_m": 22.29616000925949,
      "invalid_observations": 6,
      "missed_updates": 15,
      "position_rmse_m": 20.913644397815318,
@@ -205,6 +223,7 @@
     "baseline": {
      "containment_95": 0.9491525423728814,
      "coverage": 0.9779005524861878,
+     "gospa_m": 23.897875951219312,
      "invalid_observations": 4,
      "missed_updates": 25,
      "position_rmse_m": 18.15977954322429,
@@ -215,6 +234,7 @@
     "fusion": {
      "containment_95": 0.9491525423728814,
      "coverage": 0.9779005524861878,
+     "gospa_m": 23.898746140439105,
      "invalid_observations": 7,
      "missed_updates": 25,
      "position_rmse_m": 18.160950556024783,
@@ -229,6 +249,7 @@
     "baseline": {
      "containment_95": 0.8390804597701149,
      "coverage": 0.9613259668508287,
+     "gospa_m": 56.26646012636611,
      "invalid_observations": 2,
      "missed_updates": 13,
      "position_rmse_m": 53.44482082266643,
@@ -239,6 +260,7 @@
     "fusion": {
      "containment_95": 0.9195402298850575,
      "coverage": 0.9613259668508287,
+     "gospa_m": 47.46493536536024,
      "invalid_observations": 5,
      "missed_updates": 13,
      "position_rmse_m": 43.52761076807041,
@@ -251,6 +273,7 @@
     "baseline": {
      "containment_95": 0.8977272727272727,
      "coverage": 0.9723756906077348,
+     "gospa_m": 48.482323351814216,
      "invalid_observations": 3,
      "missed_updates": 13,
      "position_rmse_m": 45.80076403961302,
@@ -261,6 +284,7 @@
     "fusion": {
      "containment_95": 0.9488636363636364,
      "coverage": 0.9723756906077348,
+     "gospa_m": 39.90869061700078,
      "invalid_observations": 7,
      "missed_updates": 13,
      "position_rmse_m": 36.30907014815741,
@@ -273,6 +297,7 @@
     "baseline": {
      "containment_95": 0.8983050847457628,
      "coverage": 0.9779005524861878,
+     "gospa_m": 51.730692579905835,
      "invalid_observations": 1,
      "missed_updates": 21,
      "position_rmse_m": 49.82271873149619,
@@ -283,6 +308,7 @@
     "fusion": {
      "containment_95": 0.903954802259887,
      "coverage": 0.9779005524861878,
+     "gospa_m": 39.911216486767124,
      "invalid_observations": 2,
      "missed_updates": 21,
      "position_rmse_m": 37.07648541836143,
@@ -295,6 +321,7 @@
     "baseline": {
      "containment_95": 0.8111111111111111,
      "coverage": 0.994475138121547,
+     "gospa_m": 55.80289968074115,
      "invalid_observations": 1,
      "missed_updates": 15,
      "position_rmse_m": 55.396420557899155,
@@ -305,6 +332,7 @@
     "fusion": {
      "containment_95": 0.8333333333333334,
      "coverage": 0.994475138121547,
+     "gospa_m": 47.31423594898173,
      "invalid_observations": 6,
      "missed_updates": 15,
      "position_rmse_m": 46.78219528017874,
@@ -317,6 +345,7 @@
     "baseline": {
      "containment_95": 0.9470588235294117,
      "coverage": 0.9392265193370166,
+     "gospa_m": 50.39569094278326,
      "invalid_observations": 4,
      "missed_updates": 23,
      "position_rmse_m": 44.64718623707969,
@@ -327,6 +356,7 @@
     "fusion": {
      "containment_95": 0.9352941176470588,
      "coverage": 0.9392265193370166,
+     "gospa_m": 45.57376859531976,
      "invalid_observations": 7,
      "missed_updates": 23,
      "position_rmse_m": 38.73849298882424,
@@ -341,6 +371,7 @@
     "baseline": {
      "containment_95": 0.9106145251396648,
      "coverage": 0.988950276243094,
+     "gospa_m": 21.708193595696432,
      "invalid_observations": 2,
      "missed_updates": 13,
      "position_rmse_m": 18.729993590640184,
@@ -351,6 +382,7 @@
     "fusion": {
      "containment_95": 0.9497206703910615,
      "coverage": 0.988950276243094,
+     "gospa_m": 19.957547383600158,
      "invalid_observations": 5,
      "missed_updates": 13,
      "position_rmse_m": 16.64499006276438,
@@ -363,6 +395,7 @@
     "baseline": {
      "containment_95": 0.9388888888888889,
      "coverage": 0.994475138121547,
+     "gospa_m": 18.193953204634028,
      "invalid_observations": 3,
      "missed_updates": 13,
      "position_rmse_m": 16.442595076245436,
@@ -373,6 +406,7 @@
     "fusion": {
      "containment_95": 0.95,
      "coverage": 0.994475138121547,
+     "gospa_m": 16.831640678225362,
      "invalid_observations": 7,
      "missed_updates": 13,
      "position_rmse_m": 14.912345212697929,
@@ -385,6 +419,7 @@
     "baseline": {
      "containment_95": 0.9269662921348315,
      "coverage": 0.9834254143646409,
+     "gospa_m": 22.821901959007832,
      "invalid_observations": 1,
      "missed_updates": 21,
      "position_rmse_m": 18.439377873716616,
@@ -395,6 +430,7 @@
     "fusion": {
      "containment_95": 0.9382022471910112,
      "coverage": 0.9834254143646409,
+     "gospa_m": 20.992376462268513,
      "invalid_observations": 2,
      "missed_updates": 21,
      "position_rmse_m": 16.0779450419802,
@@ -407,6 +443,7 @@
     "baseline": {
      "containment_95": 0.8555555555555555,
      "coverage": 0.994475138121547,
+     "gospa_m": 22.310123913327928,
      "invalid_observations": 1,
      "missed_updates": 15,
      "position_rmse_m": 20.928613434731517,
@@ -417,6 +454,7 @@
     "fusion": {
      "containment_95": 0.8444444444444444,
      "coverage": 0.994475138121547,
+     "gospa_m": 20.308379914649667,
      "invalid_observations": 6,
      "missed_updates": 15,
      "position_rmse_m": 18.76756708188535,
@@ -429,6 +467,7 @@
     "baseline": {
      "containment_95": 0.9491525423728814,
      "coverage": 0.9779005524861878,
+     "gospa_m": 23.897875951219312,
      "invalid_observations": 4,
      "missed_updates": 25,
      "position_rmse_m": 18.15977954322429,
@@ -439,6 +478,7 @@
     "fusion": {
      "containment_95": 0.9548022598870056,
      "coverage": 0.9779005524861878,
+     "gospa_m": 22.62380410496461,
      "invalid_observations": 7,
      "missed_updates": 24,
      "position_rmse_m": 16.406283883717972,

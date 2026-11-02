@@ -62,8 +62,12 @@ same option, but Streamlit reads it only when started from the repository root.
 2. **Metrics (this run)**: every metric for baseline, fusion and their difference (see [Metrics](#metrics)).
 3. **Error over time**: the solid lines are the actual distance from the truth; the dotted lines are each filter's
    own 95 % radius. A solid line that stays above its dotted line means that filter is over-confident.
-4. **Multi-seed comparison** (after you run it): mean ± standard deviation per metric, and the verdict.
-5. **Limitations of this simulation** (expandable).
+4. **Filter consistency**: the rolling mean of each sensor's normalised innovation squared (NIS) over its last 20
+   accepted updates, divided by the measurement dimension, with the 95 % band a consistent filter stays in. It uses
+   no ground truth: a line above the band means the filter trusts that sensor too much. It is a display only; the
+   tracker does not act on it.
+5. **Multi-seed comparison** (after you run it): mean ± standard deviation per metric, and the verdict.
+6. **Limitations of this simulation** (expandable).
 
 **A single seed is an anecdote.** Draw conclusions from the multi-seed verdict.
 
@@ -71,7 +75,7 @@ Suggested sequence:
 1. Run `reference` and compare the two estimates through the turn.
 2. Run the multi-seed comparison.
 3. Raise the noise multiplier, then the missed-observation probability.
-4. Switch to `biased_bearing`: RMSE rises and containment collapses.
+4. Switch to `biased_bearing`: RMSE rises, containment collapses, and the bearing sensor's NIS climbs far above its band.
 5. Switch to `distant_bearing`: the extra sensor adds almost nothing.
 
 ## Command line
@@ -212,6 +216,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | Metric | Meaning | Good |
 |---|---|---|
 | Position RMSE (m) | Root-mean-square distance from truth, over scans **with a track** | lower |
+| GOSPA (m) | Root mean square over **all** scans of single-object GOSPA (p = 2, α = 2, cut-off c = 150 m): a tracked scan costs min(error, c), a scan without a track c/√2 ≈ 106 m | lower; equals RMSE when every scan is tracked within c |
 | Coverage | Share of scans with a track | near 1 |
 | Truth inside 95 % ellipse | Share of estimates whose 95 % ellipse contains the truth | **≈ 0.95**; lower means over-confident |
 | Missed primary-sensor updates | Scans with a track but no accepted position observation (comparable across modes) | lower |
@@ -221,7 +226,8 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | Track initiations | Tracks started | 1; more means the track was lost and restarted |
 | Processing time (s) | Tracker wall time | well under 1 s |
 
-Read RMSE together with coverage, and trust the ellipses only when containment is near 0.95.
+Read RMSE together with coverage, or use GOSPA, which combines both. Trust the ellipses only when containment is near
+0.95.
 
 **Verdict.** Per-seed RMSEs are paired.
 - **"fusion improves"** or **"fusion worsens"**: the paired t-test gives p < 0.05 **and** the mean relative change is at least 5 %. If every seed changes by exactly the same amount, the change is treated as certain (p = 0).
@@ -237,7 +243,9 @@ Read RMSE together with coverage, and trust the ellipses only when containment i
 | distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
 | biased_bearing | 18.83 ± 1.7 | 37.06 ± 4.0 | +18.23 m [+16.33, +20.13], +96.8 % | 0.28 | worsens |
 
-Coverage is identical between modes in every scenario (0.96–0.99).
+Coverage is identical between modes in every scenario (0.96–0.99). GOSPA (baseline → fusion) tells the same story:
+21.08 → 19.21 m (`reference`), 52.98 → 42.69 m (`noisy_primary`), 21.08 → 21.08 m (`distant_bearing`) and
+21.08 → 38.13 m (`biased_bearing`). It is a few metres above RMSE because the scans before a track starts count.
 
 In `biased_bearing`, fusion also misses more primary updates (24.5 vs 19.45 per run): the bias drags the estimate far enough that correct position observations fail the gate. A bias sweep (`tests/test_statistics.py`) shows the damage is not monotonic. Fusion error grows up to about 2° of bias, then falls at 3°, because the gate rejects most grossly biased bearings. A moderate bias does the most harm.
 
@@ -246,7 +254,7 @@ In `biased_bearing`, fusion also misses more primary updates (24.5 vs 19.45 per 
 - position NIS ≈ 2 and bearing NIS ≈ 1
 - 95 % containment ≈ 0.95 in both modes
 
-See `tests/test_consistency.py`. Negative controls confirm the checks fail for an over-confident filter, and for an unmodelled bearing bias, which shows up as bearing NIS above 1.5.
+See `tests/test_consistency.py`. Negative controls confirm the checks fail for an over-confident filter, and for an unmodelled bearing bias, which shows up as bearing NIS above 1.5. The dashboard's rolling bearing NIS stays inside its 95 % band in at least 85 % of windows when the filter is consistent, and in at most half of them with a 1.5° bias.
 
 ## Limitations
 
@@ -255,7 +263,7 @@ See `tests/test_consistency.py`. Negative controls confirm the checks fail for a
 - Bearing updates are linearised (EKF). Their value depends strongly on geometry: a distant bearing sensor adds almost nothing.
 - Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
 - Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.
-- RMSE is evaluated only where a track exists.
+- RMSE is evaluated only where a track exists; GOSPA covers every scan, but its cut-off (150 m) is a choice.
 - Process noise and gate settings are shared by both modes. The [Results](#results-20-seeds-019-compare---seeds-20) use the untuned defaults; `learn` can tune them per scenario (see [Learning loop](#learning-loop)).
 
 ## Development and testing

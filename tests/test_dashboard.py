@@ -35,9 +35,9 @@ def start() -> AppTest:
     return at
 
 
-def figures(at: AppTest) -> tuple[dict, dict]:
-    trajectory, error = (json.loads(c.proto.spec) for c in at.get("plotly_chart"))
-    return trajectory, error
+def figures(at: AppTest) -> tuple[dict, dict, dict]:
+    trajectory, error, nis = (json.loads(c.proto.spec) for c in at.get("plotly_chart"))
+    return trajectory, error, nis
 
 
 def trace_names(fig: dict) -> set[str]:
@@ -63,9 +63,12 @@ def showing(at: AppTest) -> str:
 
 def test_default_page_renders_complete_simulation():
     at = start()
-    trajectory, error = figures(at)
+    trajectory, error, nis = figures(at)
     assert trace_names(trajectory) == TRAJECTORY_TRACES
     assert {"baseline: actual position error", "fusion: actual position error"} <= trace_names(error)
+    # Rolling NIS: the baseline has only the position sensor; one 95 % band per panel.
+    assert trace_names(nis) == {"baseline: S1-POS", "fusion: S1-POS", "fusion: S2-BRG"}
+    assert len([shape for shape in nis["layout"]["shapes"] if shape["type"] == "rect"]) == 2
     table = at.dataframe[0].value
     assert list(table.columns) == ["baseline", "fusion", "delta"]
     assert len(table) == len(METRIC_NAMES)
@@ -89,13 +92,13 @@ def test_bearing_rays_toggle():
     at = start()
     widget(at, "checkbox", "Show bearing rays").uncheck()
     at.run()
-    trajectory, _ = figures(at)
+    trajectory, *_ = figures(at)
     assert "Bearing observations" not in trace_names(trajectory)
 
 
 def test_ellipses_drawn_every_ten_tracked_scans():
     at = start()
-    trajectory, _ = figures(at)
+    trajectory, *_ = figures(at)
     run = run_single(SCENARIOS["reference"].model_copy(), TrackerConfig(), 0)
     for mode in Mode:
         trace = next(t for t in trajectory["data"] if t.get("name") == f"{mode.value} 95% ellipse (every 10 s)")
@@ -155,8 +158,9 @@ def test_extreme_settings_render(scenario):
     widget(at, "slider", "Missed-observation").set_value(0.8)
     at.run()
     click(at, "Run simulation")
-    trajectory, error = figures(at)
+    trajectory, error, nis = figures(at)
     assert trajectory["data"] and error["data"]
+    assert len(nis["layout"]["annotations"]) == 2  # both panel titles, even when there are no updates
 
 
 def test_distant_sensor_does_not_squash_trajectory_plot():
@@ -164,7 +168,7 @@ def test_distant_sensor_does_not_squash_trajectory_plot():
     widget(at, "selectbox", "Scenario").set_value("distant_bearing")
     at.run()
     click(at, "Run simulation")
-    trajectory, _ = figures(at)
+    trajectory, *_ = figures(at)
     y_min, y_max = trajectory["layout"]["yaxis"]["range"]
     assert y_min > -10_000.0  # the bearing sensor at y = -30 km is left off-plot
     assert y_max - y_min < 10_000.0

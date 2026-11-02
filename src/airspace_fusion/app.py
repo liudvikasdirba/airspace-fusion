@@ -8,9 +8,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig, with_sensor_overrides
-from airspace_fusion.estimation import Estimate
+from airspace_fusion.estimation import NIS_WINDOW, Estimate, nis_series
 from airspace_fusion.evaluation import CHI2_2DOF_95, METRIC_NAMES, Mode, SingleRun, compare_modes, run_single
 from airspace_fusion.schemas import MeasurementType
 
@@ -156,12 +157,48 @@ def error_figure(run: SingleRun, modes: list[Mode]) -> go.Figure:
     return fig
 
 
+NIS_PANELS = {MeasurementType.POSITION_2D: "Position sensor", MeasurementType.BEARING_ONLY: "Bearing sensor"}
+
+
+def nis_figure(run: SingleRun, modes: list[Mode]) -> go.Figure:
+    """Rolling NIS per sensor type: the tracker's own consistency check, computed without ground truth."""
+    t0 = run.simulation.truth.timestamps[0]
+    fig = make_subplots(rows=len(NIS_PANELS), cols=1, shared_xaxes=True, vertical_spacing=0.12,
+                        subplot_titles=list(NIS_PANELS.values()))
+    banded: set[MeasurementType] = set()
+    for mode in modes:
+        for s in nis_series(run.modes[mode].result, run.measurements):
+            if s.measurement_type not in NIS_PANELS:
+                continue
+            row = list(NIS_PANELS).index(s.measurement_type) + 1
+            t = [(ts - t0).total_seconds() for ts in s.timestamps]
+            y = [None if math.isnan(v) else float(v) for v in s.rolling_mean]
+            fig.add_trace(go.Scatter(x=t, y=y, mode="lines", line=dict(color=MODE_COLORS[mode], width=2),
+                                     name=f"{mode.value}: {s.sensor_id}", legendgroup=mode.value,
+                                     hovertemplate="t=%{x:.0f} s  NIS/dof %{y:.2f}<extra>"
+                                     + f"{mode.value} {s.sensor_id}</extra>"),
+                          row=row, col=1)
+            # After the trace: Plotly skips shapes on a subplot that has no data yet.
+            if s.measurement_type not in banded:  # the band depends only on the window and dof, not the mode
+                banded.add(s.measurement_type)
+                lo, hi = s.band
+                fig.add_hrect(y0=lo, y1=hi, row=row, col=1, fillcolor=TRUTH_COLOR, opacity=0.18, line_width=0,
+                              layer="below")
+                fig.add_hline(y=1.0, row=row, col=1, line=dict(color=TRUTH_COLOR, width=1, dash="dash"))
+    fig.update_xaxes(title="time (s)", row=len(NIS_PANELS), col=1)
+    fig.update_yaxes(title="NIS / dof", rangemode="tozero")
+    fig.update_layout(height=460, margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
+                      legend=dict(orientation="h", yanchor="top", y=-0.2))
+    return fig
+
+
 def _radius95(e: Estimate) -> float:
     return float(math.sqrt(CHI2_2DOF_95 * np.max(np.linalg.eigvalsh(e.position_covariance))))
 
 
 METRIC_LABELS = {
     "position_rmse_m": "Position RMSE (m)",
+    "gospa_m": "GOSPA (m, all scans; missing track counts)",
     "coverage": "Coverage (share of scans with a track)",
     "containment_95": "Truth inside 95% ellipse (~0.95 = honest)",
     "missed_updates": "Missed primary-sensor updates",
@@ -223,8 +260,15 @@ def main() -> None:
     st.plotly_chart(trajectory_figure(run, modes, show_bearings), width="stretch")
     st.subheader("Metrics (this run)")
     st.dataframe(metrics_table(run).style.format("{:.4g}"), width="stretch")
-    st.caption("Lower RMSE is better. RMSE only covers scans where a track exists - read it with coverage.")
+    st.caption("Lower RMSE is better. RMSE only covers scans where a track exists - read it with coverage. "
+               "GOSPA covers every scan: a scan without a track costs about 106 m (cut-off 150 m).")
     st.plotly_chart(error_figure(run, modes), width="stretch")
+    st.subheader("Filter consistency (no ground truth needed)")
+    st.plotly_chart(nis_figure(run, modes), width="stretch")
+    st.caption(f"Rolling mean of the normalised innovation squared (NIS) over the last {NIS_WINDOW} accepted "
+               "updates of each sensor, divided by the measurement dimension. A consistent filter stays near 1, "
+               "inside the grey 95% band. Above the band, the filter trusts that sensor too much (for example "
+               "an unmodelled bias); below it, too little. This is a display only: the tracker does not act on it.")
 
     if compare_clicked:
         seeds = list(range(int(seed), int(seed) + int(n_seeds)))

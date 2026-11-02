@@ -8,6 +8,17 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- GOSPA metric (`gospa_m`): root mean square over all scans of single-object GOSPA with p = 2, α = 2 and a 150 m
+  cut-off, so scans without a track count against a mode, unlike RMSE. Shown by `run`, `compare` and the
+  dashboard, recorded in the golden file and checked against Stone Soup's `GOSPAMetric`. The verdict still uses
+  RMSE.
+- Dashboard "Filter consistency" chart: the rolling mean of each sensor's NIS per measurement dimension over its
+  last 20 accepted updates, with the 95 % band of a consistent filter. It needs no ground truth and makes an
+  unmodelled bearing bias visible during a single run. Display only; the tracker does not act on it.
+  `estimation.nis_series` computes it.
+
 ## [0.3.0] - 2026-11-02
 
 M1 finished: about 40 % faster runs with unchanged results, a per-seed run-time benchmark, sturdier parallel
