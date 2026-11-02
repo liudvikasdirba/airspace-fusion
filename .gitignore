@@ -9,3 +9,4 @@ dist/
 constraints-min.txt
 .coverage
 coverage.xml
+.claude/
