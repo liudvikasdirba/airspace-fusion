@@ -18,6 +18,22 @@ All notable changes to this project are recorded here. The format follows
   last 20 accepted updates, with the 95 % band of a consistent filter. It needs no ground truth and makes an
   unmodelled bearing bias visible during a single run. Display only; the tracker does not act on it.
   `estimation.nis_series` computes it.
+- Scenario families: a base scenario plus ranges, drawing a different world for each seed (target start, heading,
+  speed and turn; the bearing sensor placed by crossing angle and range ratio; optionally bearing bias and
+  clutter). Five built-in families: `crossing_geometry`, `range_ratio`, `manoeuvre_intensity`, `clutter_density`
+  and `bias_magnitude`. Families draw from their own random stream, so the built-in scenarios and published
+  results are unchanged ([ADR 0008](docs/adr/0008-scenario-files-and-families.md)).
+- Scenario files: TOML `[[scenario]]` and `[[family]]` entries loaded with `--scenario-file PATH` on `run`,
+  `compare`, `learn` and the new `scenarios` command, which lists everything and prints any entry as TOML.
+  `scenarios/example.toml` shows both kinds.
+- `--scenario families` selects the five built-in families; `run`, `compare` and the dashboard accept families.
+
+### Changed
+
+- `--scenario` names are checked after parsing, because scenario files add names: an unknown name now gives
+  "unknown scenario" instead of argparse's "invalid choice". `all` still means the four built-in scenarios.
+- New dependency on Python 3.10 only: `tomli>=1.1.0` (Python 3.11+ reads TOML with the standard library).
+  `ci/minimum_constraints.py` keeps environment markers.
 
 ## [0.3.0] - 2026-11-02
 

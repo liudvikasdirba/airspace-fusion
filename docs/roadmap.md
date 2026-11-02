@@ -18,7 +18,8 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
-| M2 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
+| M2 Varied worlds | **Started early** (2 November): scenario files, the scenario generator, five families and ADR 0008 are done. Open: the `sweep` command, results files and the crossing-angle README section. |
+| M3 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
 
@@ -51,7 +52,7 @@ Ordered by importance. Each one is addressed by the milestone named in the fourt
 |---|---|---|---|---|
 | 1 | No work is on `main`, there are no tags, and the README says CI has "not yet run". | The project has not actually shipped. | M0 | ✅ Resolved in 0.2.0 |
 | 2 | One run costs about 0.33 s, about 1 ms per sensor update, almost all of it Stone Soup wrapper overhead (about 13,000 `__array_ufunc__` calls per run). Seeds run one after another. | Verdicts rest on 20 seeds and learning on 6+6 seeds and 4 candidates. | M1 | Partly: about 5× faster per run and seeds run in parallel (0.2.0) |
-| 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 | Open |
+| 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 | Partly: five families draw a world per seed (2 Nov); sweeps open |
 | 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | Open |
 | 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | Open |
 | 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Open |
@@ -190,19 +191,27 @@ implementations step by step on the golden seeds and on the hypothesis-generated
 
 **Goal:** results describe how fusion behaves across geometries, not in one fixed world.
 
+Status: started early, on 2 November 2026; the first three deliverables and ADR 0008 are done.
+
 Deliverables:
-- Scenario files in TOML, read with `--scenario-file PATH` and validated by the existing pydantic models.
+- [x] Scenario files in TOML, read with `--scenario-file PATH` and validated by the existing pydantic models.
   The four built-in scenarios stay and are reproduced exactly (golden file unchanged).
-- A scenario generator that draws, per seed, the start point, heading, speed, turn time and rate, and the
+  *Also on `learn` and a new `scenarios` command, which lists entries and prints any of them as TOML. Built-in
+  scenarios written to TOML read back identical, down to every float. Unknown keys are errors.*
+- [x] A scenario generator that draws, per seed, the start point, heading, speed, turn time and rate, and the
   bearing sensor's position, from ranges given in a scenario *family*.
-- At least five built-in families, for example: `crossing_geometry` (angle between the sensors' lines of sight
+  *The bearing sensor is placed by crossing angle and range ratio relative to the target's start. Draws use their
+  own random stream, one draw per parameter in a fixed order, so fixing one parameter leaves a seed's other draws
+  unchanged: the property the sweep needs.*
+- [x] At least five built-in families, for example: `crossing_geometry` (angle between the sensors' lines of sight
   from 5° to 90°), `range_ratio`, `manoeuvre_intensity`, `clutter_density`, `bias_magnitude`.
-- A `sweep` command that varies one parameter and reports the paired verdict at each value, as a table and as
+  *Exactly these five, on the `reference` base.*
+- [ ] A `sweep` command that varies one parameter and reports the paired verdict at each value, as a table and as
   CSV for plotting.
 - A results file for every `compare` and `sweep` run, recording package version, git commit, seeds, a hash of
   the configuration, and all metrics. Saved under `data/results/`.
 - A README section showing fusion gain against crossing angle, with the geometry explained.
-- ADR 0008: scenario file format and families.
+- [x] ADR 0008: scenario file format and families.
 
 Exit criteria: at least five families; a `sweep` over crossing angle shows the expected trend (gain rising with
 crossing angle) with confidence intervals; any results file can be re-run to reproduce its numbers exactly.

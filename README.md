@@ -40,7 +40,7 @@ same option, but Streamlit reads it only when started from the repository root.
 
 | Control | Effect |
 |---|---|
-| Scenario | One of the four built-in worlds (see [Scenarios](#scenarios)); its description is shown underneath. |
+| Scenario or family | One of the four built-in worlds, or one of the five families, which draw a different world for each seed (see [Scenarios](#scenarios)). The description is shown underneath; for a family, the drawn world is described above the charts. |
 | Random seed | Which random version of that world is generated. The same seed always gives the same result. |
 | Noise multiplier | Scales both sensors' measurement noise (0.25x to 3x). |
 | Missed-observation probability | Chance that each sensor misses the object on a scan (0 to 0.8). |
@@ -87,10 +87,21 @@ One seeded simulation, both modes:
 ```
 
 Multi-seed comparison over all scenarios (about 6 s for 20 seeds, 30 s for 200, 100 s for 1000 on a 4-core laptop). Use `--scenario NAME` for
-one scenario and `--first-seed N` to start from a different seed:
+one scenario or family, `--scenario families` for the five families, and `--first-seed N` to start from a different
+seed:
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli compare --seeds 20
+```
+
+List every scenario and family, including those from scenario files, or print one as TOML to start your own file:
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli scenarios
+```
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli scenarios --toml crossing_geometry
 ```
 
 `compare` and `learn` evaluate seeds in parallel worker processes, by default as many as the CPU has cores but at
@@ -177,8 +188,48 @@ units) so that schema rejection is exercised.
 | `distant_bearing` | bearing sensor at (0, −30000) with 2° noise |
 | `biased_bearing` | bearing sensor has an unmodelled +1.5° bias (the tracker is not told) |
 
-All values live in [`config.py`](src/airspace_fusion/config.py). Edit `SCENARIOS` to add scenarios, or
-`TrackerConfig` to change tracker settings. For a position sensor, `bias` is added to each axis.
+All values live in [`config.py`](src/airspace_fusion/config.py), and `TrackerConfig` holds the tracker settings.
+For a position sensor, `bias` is added to each axis.
+
+### Families: a different world for each seed
+
+The four scenarios above share one trajectory and one sensor layout. A **family** draws a new world for each seed
+from ranges (see [ADR 0008](docs/adr/0008-scenario-files-and-families.md)):
+- **Target:** starts 1.5–2.5 km from the primary sensor in a random direction, on a crossing path (±30°) at
+  10–25 m/s, and turns at up to ±3°/s for 20–60 s from 40–100 s.
+- **Bearing sensor:** placed by **crossing angle** (the angle at the target between the two sensors' lines of
+  sight) and **range ratio** (its distance from the target relative to the primary sensor's). Those two numbers
+  decide how much a bearing adds.
+- **Everything else** (noise, misses, clutter, duration) comes from the `reference` scenario.
+
+| Family | What varies beyond the target |
+|---|---|
+| `crossing_geometry` | crossing angle 5–90° |
+| `range_ratio` | range ratio 0.5–10 (crossing 60–90°) |
+| `manoeuvre_intensity` | turns up to ±6°/s for 20–80 s (crossing 60–90°) |
+| `clutter_density` | 0–5 false observations per scan on both sensors (crossing 60–90°) |
+| `bias_magnitude` | unmodelled bearing bias 0–3° (crossing 60–90°) |
+
+The same family and seed always give the same world, and both modes share it, so comparisons stay paired. A
+family's results pool many geometries, so their spread across seeds is wider than for a fixed scenario. Families
+draw from their own random stream, so the four scenarios above and their results are unchanged.
+
+### Scenario files
+
+Define your own scenarios and families in TOML and load them with `--scenario-file PATH` (repeatable) on `run`,
+`compare`, `learn` and `scenarios`. Each entry starts from a `base` scenario and overrides fields:
+- **`[[scenario]]` tables** use the model's fields and units (metres, seconds, radians), with `[scenario.primary]`
+  and `[scenario.secondary]` for sensor fields.
+- **`[[family]]` tables** give ranges as `[lo, hi]` pairs or single fixed values, with the unit in the name
+  (`_m`, `_s`, `_deg`, `_mps`).
+- **Errors, not guesses:** unknown keys and names that are already defined are rejected, so a typo cannot quietly
+  run the wrong scenario.
+
+[`scenarios/example.toml`](scenarios/example.toml) has one of each:
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli compare --scenario-file scenarios/example.toml --scenario wide_crossing --seeds 20
+```
 
 ## How it works
 
@@ -190,6 +241,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 |---|---|
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances (symmetry relative to matrix scale) and probability ranges. Bearings are normalised to [−π, π). `parse_records` returns invalid records with their errors. |
 | `config.py` | All scenario, sensor and tracker parameters, and the four scenarios. |
+| `scenarios.py` | Scenario families (a world drawn per seed from their own random stream) and TOML scenario files. |
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
 | `estimation.py` | Single-target tracker: Kalman/extended Kalman filter in plain NumPy (Joseph-form update; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
 | `estimation_stonesoup.py` | The same tracker with the filter steps done by Stone Soup, kept as a cross-check: tests require both to give the same results ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)). |

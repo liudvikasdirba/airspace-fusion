@@ -19,6 +19,7 @@ dependencies = [
     "stonesoup>=1.4",
     "plotly>=5.20",
     "streamlit>=1.49",  # first release whose st.button accepts width=
+    "tomli>=1.1.0; python_version < '3.11'",  # scenario files; Python 3.11+ has tomllib
 ]
 
 [project.optional-dependencies]

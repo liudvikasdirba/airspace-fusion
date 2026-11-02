@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from airspace_fusion import __version__
-from airspace_fusion.config import ScenarioConfig, TrackerConfig
+from airspace_fusion.config import TrackerConfig
 from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict, compare_modes
 from airspace_fusion.learning import (
     MAX_COVERAGE_LOSS,
@@ -43,11 +43,12 @@ from airspace_fusion.learning import (
     score,
     scored_modes,
 )
+from airspace_fusion.scenarios import ScenarioSource
 
 
 @dataclass(frozen=True)
 class LearningTask:
-    scenarios: tuple[ScenarioConfig, ...]
+    scenarios: tuple[ScenarioSource, ...]
     train_seeds: tuple[int, ...]
     holdout_seeds: tuple[int, ...]
     max_candidates: int = 4
@@ -63,7 +64,7 @@ class LearningTask:
             raise ValueError("max_candidates must be at least 1")
 
 
-Evaluate = Callable[[ScenarioConfig, TrackerConfig, Sequence[int]], ComparisonSummary]
+Evaluate = Callable[[ScenarioSource, TrackerConfig, Sequence[int]], ComparisonSummary]
 
 
 @dataclass(frozen=True)
@@ -81,9 +82,9 @@ class CachedEvaluate:
 
     def __init__(self, evaluate: Evaluate) -> None:
         self._evaluate = evaluate
-        self._results: dict[tuple[ScenarioConfig, TrackerConfig, tuple[int, ...]], ComparisonSummary] = {}
+        self._results: dict[tuple[ScenarioSource, TrackerConfig, tuple[int, ...]], ComparisonSummary] = {}
 
-    def __call__(self, scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Sequence[int]) -> ComparisonSummary:
+    def __call__(self, scenario: ScenarioSource, tracker: TrackerConfig, seeds: Sequence[int]) -> ComparisonSummary:
         key = (scenario, tracker, tuple(seeds))
         if key not in self._results:
             self._results[key] = self._evaluate(scenario, tracker, seeds)
@@ -94,7 +95,7 @@ class CachedEvaluate:
 class ScenarioWork:
     """Everything the agents learn about one scenario during one round."""
 
-    scenario: ScenarioConfig
+    scenario: ScenarioSource
     incumbent: TrackerConfig
     fusion_enabled: bool
     tried: list[TrackerConfig]
@@ -319,7 +320,7 @@ class Orchestrator:
                 break
         return LearningOutcome(self.rules, rounds_run, tuple(all_lessons), tuple(report), tuple(failed.values()))
 
-    def _execute(self, scenario: ScenarioConfig, ctx: StepContext) -> ScenarioWork:
+    def _execute(self, scenario: ScenarioSource, ctx: StepContext) -> ScenarioWork:
         work = ScenarioWork(
             scenario=scenario,
             incumbent=self.rules.tracker_for(scenario.name),

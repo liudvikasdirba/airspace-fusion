@@ -20,6 +20,7 @@ import numpy as np
 
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
 from airspace_fusion.estimation import TrackerResult, chi2_quantile, run_tracker
+from airspace_fusion.scenarios import ScenarioSource
 from airspace_fusion.schemas import Measurement, RejectedRecord, parse_records
 from airspace_fusion.simulator import GroundTruth, SimulationOutput, simulate
 
@@ -227,9 +228,9 @@ METRIC_NAMES = (
 )
 
 
-def seed_metrics(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> dict[Mode, RunMetrics]:
-    """Both modes' metrics for one seed. Module-level, so worker processes can run it."""
-    run = run_single(scenario, tracker, seed)
+def seed_metrics(scenario: ScenarioSource, tracker: TrackerConfig, seed: int) -> dict[Mode, RunMetrics]:
+    """Both modes' metrics for one seed, in the world ``scenario`` gives that seed. Module-level, for workers."""
+    run = run_single(scenario.for_seed(seed), tracker, seed)
     return {mode: run.modes[mode].metrics for mode in Mode}
 
 
@@ -259,9 +260,12 @@ def seed_executor(workers: int, seeds_per_comparison: int) -> Iterator[Executor 
 
 
 def compare_modes(
-    scenario: ScenarioConfig, tracker: TrackerConfig, seeds: Sequence[int], executor: Executor | None = None
+    scenario: ScenarioSource, tracker: TrackerConfig, seeds: Sequence[int], executor: Executor | None = None
 ) -> ComparisonSummary:
     """Paired baseline/fusion comparison over ``seeds``. With an ``executor``, seeds run in parallel.
+
+    ``scenario`` is a fixed scenario or a family; a family draws a different world for each seed, and both modes
+    of a seed always share that world, so the comparison stays paired.
 
     Seeds are independent and results are collected in seed order, so the summary is the same either way;
     only ``processing_time_s`` (wall time) can differ.

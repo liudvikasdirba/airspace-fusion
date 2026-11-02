@@ -1,0 +1,23 @@
+# Example scenario file. List what it adds and run it:
+#   airspace-fusion scenarios --scenario-file scenarios/example.toml
+#   airspace-fusion compare --scenario-file scenarios/example.toml --scenario wide_crossing --seeds 20
+# Print any built-in scenario or family in this format to start your own:
+#   airspace-fusion scenarios --toml crossing_geometry
+#
+# [[scenario]] fields are ScenarioConfig fields in its units (metres, seconds, radians); [[family]] ranges carry
+# their unit in their name and are [lo, hi] pairs or single fixed values. Unknown keys are errors.
+
+[[scenario]]
+name = "close_bearing_sensor"
+description = "Reference geometry with the bearing sensor 1 km south of the primary sensor."
+base = "reference"
+
+[scenario.secondary]
+position_m = [0.0, -1000.0]
+
+[[family]]
+name = "wide_crossing"
+description = "Crossing angles from 60 to 90 deg with faster targets (20 to 35 m/s)."
+base = "reference"
+crossing_angle_deg = [60.0, 90.0]
+speed_mps = [20.0, 35.0]
