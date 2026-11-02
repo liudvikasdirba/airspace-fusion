@@ -477,6 +477,66 @@ def _validate_report_times(report_times: Sequence[datetime]) -> None:
             raise ValueError("report times must be strictly increasing")
 
 
+@dataclass(frozen=True)
+class NisSeries:
+    """NIS of one sensor's accepted updates of one type, divided by the measurement dimension.
+
+    For a consistent filter each value has mean 1, and ``window`` times ``dof`` times the rolling mean is
+    chi-square with ``window * dof`` degrees of freedom; ``band`` is the central 95 % interval of the rolling
+    mean under that assumption. A rolling mean above the band means the filter trusts this sensor too much.
+    Only gated (accepted) updates have a NIS, so the values are truncated at the gate: a consistent filter's
+    mean sits slightly below 1, and the gate hides the largest innovations of a badly biased sensor.
+    """
+
+    sensor_id: str
+    measurement_type: MeasurementType
+    dof: int
+    window: int
+    timestamps: list[datetime]
+    nis_per_dof: np.ndarray
+    rolling_mean: np.ndarray  # mean of the last ``window`` values; NaN until ``window`` values exist
+    band: tuple[float, float]
+
+
+# Accepted updates per sensor in the rolling NIS mean: about 20 s of updates at 1 s scans.
+NIS_WINDOW = 20
+
+
+def nis_series(result: TrackerResult, measurements: Iterable[Measurement], window: int = NIS_WINDOW) -> list[NisSeries]:
+    """Rolling NIS per sensor and measurement type, from the tracker's own innovations (no ground truth)."""
+    if window < 1:
+        raise ValueError(f"window must be at least 1, got {window}")
+    from scipy import stats  # imported here so that worker processes, which never need it, start faster
+
+    groups: dict[tuple[str, MeasurementType], list[tuple[datetime, float, int]]] = {}
+    seen: set[str] = set()
+    for m in measurements:
+        # A repeated record (same measurement_id) was ignored by the tracker; count its NIS once.
+        if m.measurement_id in seen:
+            continue
+        seen.add(m.measurement_id)
+        nis = result.update_nis.get(m.measurement_id)
+        if nis is not None:
+            dof = len(m.measurement_value)
+            groups.setdefault((m.sensor_id, m.measurement_type), []).append((m.timestamp_utc, nis / dof, dof))
+    series = []
+    for (sensor_id, measurement_type), rows in sorted(groups.items(), key=lambda g: (g[0][0], g[0][1].value)):
+        rows.sort(key=lambda r: r[0])
+        values = np.array([r[1] for r in rows])
+        dof = rows[0][2]
+        rolling = np.full(values.size, math.nan)
+        if values.size >= window:
+            sums = np.cumsum(np.concatenate([[0.0], values]))
+            rolling[window - 1 :] = (sums[window:] - sums[:-window]) / window
+        lo, hi = stats.chi2.ppf([0.025, 0.975], window * dof) / (window * dof)
+        series.append(
+            NisSeries(
+                sensor_id, measurement_type, dof, window, [r[0] for r in rows], values, rolling, (float(lo), float(hi))
+            )
+        )
+    return series
+
+
 def run_tracker(
     measurements: Iterable[Measurement],
     report_times: Sequence[datetime],

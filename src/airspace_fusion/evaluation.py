@@ -25,6 +25,10 @@ from airspace_fusion.simulator import GroundTruth, SimulationOutput, simulate
 
 # 95 % probability contour of a 2D Gaussian (chi-square, 2 dof).
 CHI2_2DOF_95 = chi2_quantile(0.95, 2)
+# GOSPA cut-off c (p = 2, alpha = 2). A scan without a track costs c / sqrt(2); an estimate further than c from
+# the truth costs c, the same as a missed object plus a false track. 150 m is about 3x the worst scenario RMSE,
+# so a correctly held track is almost never cut off.
+GOSPA_CUTOFF_M = 150.0
 # Relative RMSE change below which a difference is not considered material.
 MATERIAL_RELATIVE_CHANGE = 0.05
 SIGNIFICANCE_LEVEL = 0.05
@@ -52,6 +56,7 @@ def sensors_for_mode(scenario: ScenarioConfig, mode: Mode) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class RunMetrics:
     position_rmse_m: float  # NaN if no estimates exist
+    gospa_m: float  # RMS over all scans of single-object GOSPA; missing tracks count, unlike RMSE
     coverage: float  # fraction of scan times with a track estimate
     containment_95: float  # fraction of estimates whose 95 % ellipse contains the truth
     missed_updates: int  # scans with a track but no accepted primary-sensor update (comparable across modes)
@@ -89,6 +94,7 @@ def evaluate_run(
     n_total = len(result.estimates)
     return RunMetrics(
         position_rmse_m=math.sqrt(sum(sq_errors) / n_est) if n_est else math.nan,
+        gospa_m=gospa(sq_errors, n_total - n_est),
         coverage=n_est / n_total if n_total else math.nan,
         containment_95=contained / n_est if n_est else math.nan,
         missed_updates=result.missed_updates_for(primary_sensor_id),
@@ -98,6 +104,20 @@ def evaluate_run(
         track_initiations=result.track_initiations,
         processing_time_s=result.processing_time_s,
     )
+
+
+def gospa(sq_errors: Sequence[float], scans_without_track: int, cutoff_m: float = GOSPA_CUTOFF_M) -> float:
+    """Root mean square over scans of GOSPA (p = 2, alpha = 2) for one true object, NaN if there are no scans.
+
+    The object exists at every scan. A scan with a track costs min(d, c)^2, where d is the position error;
+    a scan without one costs c^2 / 2 (one missed object). With every scan tracked within c, this equals the RMSE.
+    """
+    n_total = len(sq_errors) + scans_without_track
+    if n_total == 0:
+        return math.nan
+    c2 = cutoff_m * cutoff_m
+    total = sum(min(e, c2) for e in sq_errors) + scans_without_track * c2 / 2.0
+    return math.sqrt(total / n_total)
 
 
 @dataclass(frozen=True)
@@ -195,6 +215,7 @@ def paired_verdict(
 
 METRIC_NAMES = (
     "position_rmse_m",
+    "gospa_m",
     "coverage",
     "containment_95",
     "missed_updates",

@@ -11,11 +11,13 @@ import airspace_fusion.evaluation as evaluation
 from airspace_fusion.config import SCENARIOS, TrackerConfig
 from airspace_fusion.estimation import Disposition, Estimate, TrackerResult
 from airspace_fusion.evaluation import (
+    GOSPA_CUTOFF_M,
     MIN_PARALLEL_SEEDS,
     Mode,
     Verdict,
     compare_modes,
     evaluate_run,
+    gospa,
     paired_verdict,
     run_single,
     seed_executor,
@@ -54,6 +56,8 @@ def test_evaluate_run_known_values():
     )
     m = evaluate_run(result, truth(), invalid_count=2, primary_sensor_id="P")
     assert m.position_rmse_m == pytest.approx(math.sqrt((9 + 16 + 0.25) / 3))
+    # GOSPA counts the scan without a track (c^2 / 2) and averages over all four scans.
+    assert m.gospa_m == pytest.approx(math.sqrt((GOSPA_CUTOFF_M**2 / 2 + 9 + 16 + 0.25) / 4))
     assert m.coverage == pytest.approx(0.75)
     # 95 % ellipse with unit variance has radius sqrt(5.99) ~ 2.45: only the 0.5 m error is contained.
     assert m.containment_95 == pytest.approx(1 / 3)
@@ -67,8 +71,9 @@ def test_evaluate_run_without_estimates():
     result = TrackerResult([estimate(t, None) for t in TIMES], {}, 0, 0.0)
     m = evaluate_run(result, truth(), 0, "P")
     assert math.isnan(m.position_rmse_m) and m.coverage == 0.0
+    assert m.gospa_m == pytest.approx(GOSPA_CUTOFF_M / math.sqrt(2))  # every scan is a missed object
     empty = evaluate_run(TrackerResult([], {}, 0, 0.0), truth(), 0, "P")
-    assert math.isnan(empty.coverage)
+    assert math.isnan(empty.coverage) and math.isnan(empty.gospa_m)
 
 
 def test_evaluate_run_rejects_misaligned_timestamps():
@@ -182,3 +187,33 @@ def test_interrupted_seed_executor_drops_queued_work():
 def test_disposition_counts_are_derived():
     result = TrackerResult([], {"a": Disposition.ACCEPTED, "b": Disposition.ACCEPTED}, 0, 0.0)
     assert result.disposition_counts == Counter({Disposition.ACCEPTED: 2})
+
+
+def test_gospa_known_values():
+    assert gospa([9.0, 16.0], 0) == pytest.approx(math.sqrt(12.5))  # all scans tracked within c: equals RMSE
+    assert gospa([200.0**2], 0, cutoff_m=150.0) == pytest.approx(150.0)  # beyond c: missed plus false, c^2
+    assert gospa([], 2, cutoff_m=100.0) == pytest.approx(100.0 / math.sqrt(2))
+    assert gospa([0.0], 1, cutoff_m=100.0) == pytest.approx(50.0)  # (0 + 100^2 / 2) / 2 = 50^2
+    assert math.isnan(gospa([], 0))
+
+
+@pytest.mark.parametrize("scenario", ["reference", "biased_bearing"])
+def test_gospa_matches_stone_soup(scenario):
+    """Oracle: Stone Soup's GOSPA (p = 2, alpha = 2) per scan, combined as the root mean square over scans."""
+    from stonesoup.measures import Euclidean
+    from stonesoup.metricgenerator.ospametric import GOSPAMetric
+    from stonesoup.types.state import State
+
+    run = run_single(SCENARIOS[scenario], TrackerConfig(), 0)
+    truth = run.simulation.truth
+    metric = GOSPAMetric(c=GOSPA_CUTOFF_M, p=2, measure=Euclidean((0, 2)))
+    for mode in Mode:
+        squares = []
+        for k, e in enumerate(run.modes[mode].result.estimates):
+            x, y = truth.positions_m[k]
+            true_state = State(np.array([[x], [0.0], [y], [0.0]]), timestamp=e.timestamp)
+            tracked = [State(e.state.reshape(4, 1), timestamp=e.timestamp)] if e.has_track else []
+            single_time, _ = metric.compute_gospa_metric(tracked, [true_state])
+            squares.append(float(single_time.value["distance"]) ** 2)
+        expected = math.sqrt(sum(squares) / len(squares))
+        assert run.modes[mode].metrics.gospa_m == pytest.approx(expected, rel=1e-9), mode

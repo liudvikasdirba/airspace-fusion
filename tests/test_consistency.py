@@ -23,6 +23,7 @@ from helpers import ACCEL_STD_MPS2, matched_scenario, matched_tracker
 from scipy import stats
 
 from airspace_fusion.config import ScenarioConfig, TrackerConfig, default_secondary
+from airspace_fusion.estimation import nis_series
 from airspace_fusion.evaluation import CHI2_2DOF_95, Mode, run_single
 from airspace_fusion.schemas import MeasurementType
 
@@ -132,3 +133,25 @@ def test_bias_shows_in_bearing_nis():
     assert s[Mode.FUSION].nis_bearing > 1.5
     assert s[Mode.FUSION].containment_95 < 0.93
     assert 1.8 <= s[Mode.BASELINE].nis_position <= 2.1
+
+
+def rolling_bearing_nis_in_band(scenario: ScenarioConfig, runs: int) -> float:
+    """Share of full rolling-NIS windows of the bearing sensor (fusion mode) that lie inside the 95 % band."""
+    inside = []
+    for seed in range(runs):
+        run = run_single(scenario, matched_tracker(), seed)
+        for s in nis_series(run.modes[Mode.FUSION].result, run.measurements):
+            if s.measurement_type is MeasurementType.BEARING_ONLY:
+                full = s.rolling_mean[~np.isnan(s.rolling_mean)]
+                inside.extend((full >= s.band[0]) & (full <= s.band[1]))
+    return float(np.mean(inside))
+
+
+def test_rolling_bearing_nis_separates_bias():
+    """The dashboard's rolling NIS: inside its band when consistent; outside it with a 1.5 deg bearing bias."""
+    assert rolling_bearing_nis_in_band(matched_scenario(), 10) >= 0.85  # 0.95 expected; windows overlap
+    biased = matched_scenario(
+        secondary=default_secondary(detection_probability=1.0, false_observations_per_scan=0.0,
+                                    bias=math.radians(1.5))
+    )
+    assert rolling_bearing_nis_in_band(biased, 10) <= 0.5

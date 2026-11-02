@@ -18,7 +18,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
-| M2 – M8 | Not started. |
+| M2 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
 
@@ -214,7 +214,7 @@ its held-out seeds.
 
 Deliverables:
 - GOSPA as an additional metric (single object; penalises missing tracks as well as error), so that coverage
-  and error are judged together.
+  and error are judged together. *Added early, 2 November (cut-off 150 m); verdict v2 still to decide how to use it.*
 - Verdict v2:
   - "fusion improves" also requires fusion's 95 % containment to be no more than 0.03 below the baseline's
   - a new verdict, "fusion over-confident", when containment falls below 0.85 whatever the RMSE does
