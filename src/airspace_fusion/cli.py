@@ -1,8 +1,9 @@
-"""Command-line entry point: run one simulation or a multi-seed baseline/fusion comparison."""
+"""Command-line entry point: simulations, multi-seed baseline/fusion comparisons, sweeps and learning."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 from concurrent.futures import Executor
@@ -18,14 +19,19 @@ from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import (
     METRIC_NAMES,
     MIN_PARALLEL_SEEDS,
+    ComparisonSummary,
     Mode,
+    SweepPoint,
     compare_modes,
     run_single,
     seed_executor,
+    sweep,
 )
 from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
+from airspace_fusion.results import ResultEntry, ResultsFileError, build_record, load_record, reproduce, save_record
 from airspace_fusion.scenarios import (
     FAMILIES,
+    SWEEPABLE_PARAMETERS,
     ScenarioFamily,
     ScenarioFileError,
     ScenarioSource,
@@ -35,6 +41,8 @@ from airspace_fusion.scenarios import (
 
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
+DEFAULT_RESULTS_DIR = Path("data/results")
+RESULTS_DIR_ENV = "AIRSPACE_FUSION_RESULTS_DIR"  # overrides the default results folder
 
 
 def _usable_cpus() -> int:
@@ -115,22 +123,41 @@ def _load_rules(args: argparse.Namespace, must_exist: bool) -> RuleBook:
         _usage_error(args, str(exc))
 
 
+def _results_dir(args: argparse.Namespace) -> Path:
+    return args.results_dir or Path(os.environ.get(RESULTS_DIR_ENV) or DEFAULT_RESULTS_DIR)
+
+
+def _save_results(
+    args: argparse.Namespace, command: str, entries: list[ResultEntry], tracker: TrackerConfig, seeds: list[int]
+) -> None:
+    if args.no_results:
+        return
+    path = save_record(build_record(command, entries, tracker, seeds, args.argv), _results_dir(args))
+    print(f"results saved to {path} (check with: airspace-fusion reproduce {path})")
+
+
 def _compare(args: argparse.Namespace) -> None:
     sources = _selected(args)
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
     # An explicitly named rule book must exist: silently falling back to defaults would mislabel the results.
     rules = _load_rules(args, must_exist=True) if args.rules else None
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
+    # A results record holds one tracker; a rule book with per-scenario settings gives one record per setting.
+    by_tracker: dict[TrackerConfig, list[ResultEntry]] = {}
     with seed_executor(args.workers, len(seeds)) as executor:
         for source in sources:
-            _print_comparison(source, seeds, rules, executor)
+            tracker = rules.tracker_for(source.name) if rules else TrackerConfig()
+            summary = _print_comparison(source, tracker, seeds, rules, executor)
+            by_tracker.setdefault(tracker, []).append(ResultEntry(source, summary))
+    for tracker, entries in by_tracker.items():
+        _save_results(args, "compare", entries, tracker, seeds)
 
 
 def _print_comparison(
-    source: ScenarioSource, seeds: list[int], rules: RuleBook | None, executor: Executor | None
-) -> None:
+    source: ScenarioSource, tracker: TrackerConfig, seeds: list[int], rules: RuleBook | None,
+    executor: Executor | None,
+) -> ComparisonSummary:
     name = source.name
-    tracker = rules.tracker_for(name) if rules else TrackerConfig()
     s = compare_modes(source, tracker, seeds, executor)
     kind = " (family: a different world for each seed)" if isinstance(source, ScenarioFamily) else ""
     print(f"== {name}{kind}: {source.description}")
@@ -145,6 +172,106 @@ def _print_comparison(
           f"[95% CI {s.rmse_delta_ci95_m[0]:+.2f}, {s.rmse_delta_ci95_m[1]:+.2f}], "
           f"relative {s.rmse_relative_change:+.1%}, paired t-test p={s.rmse_p_value:.3g}")
     print(f"VERDICT: {s.verdict.value}\n")
+    return s
+
+
+def _sweep_values(text: str) -> list[float]:
+    """Comma-separated values; ``lo:hi:n`` stands for n evenly spaced values from lo to hi."""
+    values: list[float] = []
+    for token in text.split(","):
+        token = token.strip()
+        try:
+            if ":" in token:
+                lo, hi, n = token.split(":")
+                count = int(n)
+                if count < 2:
+                    raise ValueError
+                values += [float(lo) + (float(hi) - float(lo)) * k / (count - 1) for k in range(count)]
+            else:
+                values.append(float(token))
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"bad value {token!r}: use numbers, or lo:hi:n with n >= 2") from None
+    return values
+
+
+SWEEP_CSV_COLUMNS = (
+    "family", "parameter", "value", "seeds", "baseline_rmse_m", "baseline_rmse_std", "fusion_rmse_m",
+    "fusion_rmse_std", "rmse_delta_m", "rmse_delta_ci95_low", "rmse_delta_ci95_high", "rmse_relative_change",
+    "p_value", "verdict", "baseline_gospa_m", "fusion_gospa_m", "baseline_coverage", "fusion_coverage",
+    "baseline_containment_95", "fusion_containment_95",
+)
+
+
+def _sweep_row(family: str, parameter: str, point: SweepPoint) -> dict[str, object]:
+    s = point.summary
+    base, fused = s.metrics[Mode.BASELINE], s.metrics[Mode.FUSION]
+    return {
+        "family": family, "parameter": parameter, "value": point.value, "seeds": len(s.seeds),
+        "baseline_rmse_m": base["position_rmse_m"].mean, "baseline_rmse_std": base["position_rmse_m"].std,
+        "fusion_rmse_m": fused["position_rmse_m"].mean, "fusion_rmse_std": fused["position_rmse_m"].std,
+        "rmse_delta_m": s.rmse_delta_mean_m, "rmse_delta_ci95_low": s.rmse_delta_ci95_m[0],
+        "rmse_delta_ci95_high": s.rmse_delta_ci95_m[1], "rmse_relative_change": s.rmse_relative_change,
+        "p_value": s.rmse_p_value, "verdict": s.verdict.value,
+        "baseline_gospa_m": base["gospa_m"].mean, "fusion_gospa_m": fused["gospa_m"].mean,
+        "baseline_coverage": base["coverage"].mean, "fusion_coverage": fused["coverage"].mean,
+        "baseline_containment_95": base["containment_95"].mean,
+        "fusion_containment_95": fused["containment_95"].mean,
+    }
+
+
+def _sweep(args: argparse.Namespace) -> None:
+    (source,) = _selected(args, groups=False)
+    if not isinstance(source, ScenarioFamily):
+        _usage_error(args, f"{source.name!r} is a fixed scenario; sweep needs a family ('airspace-fusion scenarios')")
+    try:  # check every point before running any
+        for value in args.values:
+            source.with_fixed(args.parameter, value)
+    except ValueError as exc:
+        _usage_error(args, str(exc))
+    seeds = list(range(args.first_seed, args.first_seed + args.seeds))
+    tracker = TrackerConfig()
+    print(f"sweep of {args.parameter} in family {source.name}; seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); "
+          "every point uses the same seeds and the same other draws\n")
+    with seed_executor(args.workers, len(seeds)) as executor:
+        points = sweep(source, args.parameter, args.values, tracker, seeds, executor)
+    print(f"{args.parameter:>22}  {'baseline RMSE':>14}  {'fusion RMSE':>12}  {'change [95% CI]':>28}  "
+          f"{'p':>8}  {'fusion cont.':>12}  verdict")
+    for point in points:
+        s = point.summary
+        base, fused = s.metrics[Mode.BASELINE], s.metrics[Mode.FUSION]
+        low, high = s.rmse_delta_ci95_m
+        change = f"{s.rmse_relative_change:+.1%} [{low:+.2f}, {high:+.2f}] m"
+        print(f"{point.value:>22.4g}  {base['position_rmse_m'].mean:>12.2f} m  {fused['position_rmse_m'].mean:>10.2f} m"
+              f"  {change:>28}  {s.rmse_p_value:>8.2g}  {fused['containment_95'].mean:>12.2f}  {s.verdict.value}")
+    if args.csv:
+        args.csv.parent.mkdir(parents=True, exist_ok=True)
+        with args.csv.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=SWEEP_CSV_COLUMNS)
+            writer.writeheader()
+            writer.writerows(_sweep_row(source.name, args.parameter, point) for point in points)
+        print(f"\nCSV written to {args.csv}")
+    entries = [ResultEntry(p.family, p.summary, {args.parameter: p.value}) for p in points]
+    _save_results(args, "sweep", entries, tracker, seeds)
+
+
+def _reproduce(args: argparse.Namespace) -> int:
+    try:
+        record = load_record(args.path)
+    except ResultsFileError as exc:
+        _usage_error(args, str(exc))
+    count = len(record["entries"])
+    dirty = ", with uncommitted changes" if record["git_dirty"] else ""
+    print(f"re-running {count} entr{'y' if count == 1 else 'ies'} of a {record['command']} run from "
+          f"{record['created']} (package {record['package_version']}, commit {str(record['git_commit'])[:12]}{dirty})")
+    with seed_executor(args.workers, len(record["seeds"])) as executor:
+        differences = reproduce(record, executor)
+    if differences:
+        print(f"NOT REPRODUCED: {len(differences)} value(s) differ", file=sys.stderr)
+        for line in differences[:20]:
+            print(f"  {line}", file=sys.stderr)
+        return 1
+    print("reproduced: every metric matches (wall-clock time excluded)")
+    return 0
 
 
 def _learn(args: argparse.Namespace) -> int:
@@ -232,15 +359,38 @@ def main(argv: list[str] | None = None) -> int:
     learn_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
     learn_p.set_defaults(func=_learn, parser=learn_p)
 
+    swp_p = sub.add_parser("sweep", help="paired comparison at each value of one family parameter")
+    swp_p.add_argument("--scenario", required=True, help="the family to sweep")
+    swp_p.add_argument("--parameter", required=True, choices=SWEEPABLE_PARAMETERS)
+    swp_p.add_argument("--values", required=True, type=_sweep_values,
+                       help="comma-separated values, or lo:hi:n for n evenly spaced values (e.g. 5:90:6)")
+    swp_p.add_argument("--seeds", type=_positive_int, default=20)
+    swp_p.add_argument("--first-seed", type=int, default=0)
+    swp_p.add_argument("--csv", type=Path, metavar="PATH", help="also write the table as CSV")
+    swp_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
+    swp_p.set_defaults(func=_sweep, parser=swp_p)
+
+    rep_p = sub.add_parser("reproduce", help="re-run a results file and check that every metric matches")
+    rep_p.add_argument("path", type=Path, help="a results file written by compare or sweep")
+    rep_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
+    rep_p.set_defaults(func=_reproduce, parser=rep_p)
+
+    for subparser in (cmp_p, swp_p):
+        subparser.add_argument("--results-dir", type=Path, metavar="PATH",
+                               help=f"where to save the results file (default: ${RESULTS_DIR_ENV} or "
+                                    f"{DEFAULT_RESULTS_DIR})")
+        subparser.add_argument("--no-results", action="store_true", help="do not save a results file")
+
     scn_p = sub.add_parser("scenarios", help="list scenarios and families, or print one as TOML")
     scn_p.add_argument("--toml", metavar="NAME", help="print this scenario or family as a scenario file")
     scn_p.set_defaults(func=_scenarios, parser=scn_p)
 
-    for subparser in (run_p, cmp_p, learn_p, scn_p):
+    for subparser in (run_p, cmp_p, swp_p, learn_p, scn_p):
         subparser.add_argument("--scenario-file", type=Path, action="append", metavar="PATH",
                                help="TOML file with extra [[scenario]] and [[family]] entries (repeatable)")
 
     args = parser.parse_args(argv)
+    args.argv = list(sys.argv[1:] if argv is None else argv)  # recorded in results files
     try:
         return args.func(args) or 0
     except BrokenProcessPool:

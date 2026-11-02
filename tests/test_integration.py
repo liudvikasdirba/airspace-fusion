@@ -27,7 +27,9 @@ def test_cli_output_reproducible_across_processes():
 
     def run() -> str:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
-        return "\n".join(line for line in done.stdout.splitlines() if not line.startswith("processing_time_s"))
+        # Wall-clock time and the timestamped results file name differ between processes; nothing else may.
+        lines = done.stdout.splitlines()
+        return "\n".join(line for line in lines if not line.startswith(("processing_time_s", "results saved")))
 
     first, second = run(), run()
     assert "VERDICT" in first
@@ -114,7 +116,8 @@ ALLOWED_IMPORTS = {
     "evaluation": {"config", "estimation", "scenarios", "schemas", "simulator"},
     "learning": {"config", "evaluation"},
     "agents": {"config", "evaluation", "learning", "scenarios"},
-    "cli": {"agents", "config", "evaluation", "learning", "scenarios"},
+    "results": {"config", "evaluation", "scenarios"},
+    "cli": {"agents", "config", "evaluation", "learning", "results", "scenarios"},
     "app": {"config", "estimation", "evaluation", "scenarios", "schemas"},
 }
 

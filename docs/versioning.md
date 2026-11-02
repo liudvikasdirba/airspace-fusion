@@ -19,6 +19,7 @@ The compatibility surface is:
 - `ScenarioConfig`, `SensorConfig` and `TrackerConfig` fields, and the built-in scenarios
 - metric definitions and the verdict rules
 - the rule book JSON format (`format_version`) and the run-log events
+- the results file format (`format_version` in `data/results/*.json`) and the sweep CSV columns
 
 ## Which number to raise
 

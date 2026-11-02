@@ -104,6 +104,26 @@ List every scenario and family, including those from scenario files, or print on
 .venv/Scripts/python -m airspace_fusion.cli scenarios --toml crossing_geometry
 ```
 
+Sweep one family parameter: the paired comparison at each value, over the same seeds (values as a list, or
+`lo:hi:n` for n evenly spaced values; `--csv` also writes the table for plotting):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli sweep --scenario crossing_geometry --parameter crossing_angle_deg --values 5:90:6 --seeds 50 --csv sweep.csv
+```
+
+Every `compare` and `sweep` saves a **results file** under `data/results/` (change it with `--results-dir` or the
+`AIRSPACE_FUSION_RESULTS_DIR` environment variable; `--no-results` saves nothing). It records:
+- the scenarios or families as data, the tracker settings and the seeds
+- every metric summary
+- the package version, git commit (and whether there were uncommitted changes), Python version and command line
+- a hash of the configuration
+
+`reproduce` re-runs a results file and exits with status 1 if any metric differs (wall-clock time excluded):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli reproduce data/results/<file>.json
+```
+
 `compare` and `learn` evaluate seeds in parallel worker processes, by default as many as the CPU has cores but at
 most 4. Results are identical to a serial run; only `processing_time_s` differs. Each worker needs about 100 MB:
 on a machine with little free memory use `--workers 2` or `--workers 1` (serial), and on a large machine more
@@ -231,6 +251,16 @@ Define your own scenarios and families in TOML and load them with `--scenario-fi
 .venv/Scripts/python -m airspace_fusion.cli compare --scenario-file scenarios/example.toml --scenario wide_crossing --seeds 20
 ```
 
+### Sweeps
+
+A sweep fixes one family parameter at each of several values. A family draws every parameter of a seed in a fixed
+order, so at every point each seed keeps the same target path, turn and other draws, and only the swept parameter
+changes (common random numbers). Differences between points therefore come from that parameter. For example, a
+crossing-angle sweep gives identical baseline results at every point, because the baseline ignores the bearing
+sensor.
+
+See [Fusion gain against crossing angle](#fusion-gain-against-crossing-angle) for the first sweep's result.
+
 ## How it works
 
 ```
@@ -242,6 +272,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances (symmetry relative to matrix scale) and probability ranges. Bearings are normalised to [−π, π). `parse_records` returns invalid records with their errors. |
 | `config.py` | All scenario, sensor and tracker parameters, and the four scenarios. |
 | `scenarios.py` | Scenario families (a world drawn per seed from their own random stream) and TOML scenario files. |
+| `results.py` | Results files: what each `compare` and `sweep` run used and produced, with provenance; `reproduce` re-runs one. |
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
 | `estimation.py` | Single-target tracker: Kalman/extended Kalman filter in plain NumPy (Joseph-form update; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
 | `estimation_stonesoup.py` | The same tracker with the filter steps done by Stone Soup, kept as a cross-check: tests require both to give the same results ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)). |
@@ -307,6 +338,54 @@ In `biased_bearing`, fusion also misses more primary updates (24.5 vs 19.45 per 
 - 95 % containment ≈ 0.95 in both modes
 
 See `tests/test_consistency.py`. Negative controls confirm the checks fail for an over-confident filter, and for an unmodelled bearing bias, which shows up as bearing NIS above 1.5. The dashboard's rolling bearing NIS stays inside its 95 % band in at least 85 % of windows when the filter is consistent, and in at most half of them with a 1.5° bias.
+
+### Fusion gain against crossing angle
+
+The **crossing angle** is the angle at the target between the two sensors' lines of sight:
+
+```
+                 bearing sensor (S2)
+                /
+               /
+   target  ●  ) crossing angle
+                                                position sensor (S1)
+```
+
+A bearing tells the tracker in which direction the target lies from S2. It says nothing about the distance along
+that line, but it pins down the position *across* it: at 2 km, a 0.5° bearing error is about 17 m across the line
+of sight. The position sensor measures both coordinates with 25 m error.
+
+Sweep of the `crossing_geometry` family, 100 seeds (0–99) per angle. Every angle uses the same seeds and the same
+target paths, so only the bearing sensor's position changes; that is why the baseline, which ignores the bearing
+sensor, is identical at every angle.
+
+| Crossing angle | Baseline RMSE | Fusion RMSE | Change [95 % CI] | GOSPA baseline → fusion | Fusion 95 % containment |
+|---|---|---|---|---|---|
+| 5° | 18.67 m | 15.94 m | −14.6 % [−3.02, −2.44] m | 21.07 → 18.70 m | 0.93 |
+| 15° | 18.67 m | 16.03 m | −14.1 % [−2.92, −2.36] m | 21.07 → 18.78 m | 0.93 |
+| 30° | 18.67 m | 16.14 m | −13.6 % [−2.80, −2.27] m | 21.07 → 18.86 m | 0.93 |
+| 45° | 18.67 m | 16.29 m | −12.8 % [−2.61, −2.16] m | 21.07 → 19.00 m | 0.93 |
+| 60° | 18.67 m | 16.36 m | −12.4 % [−2.52, −2.09] m | 21.07 → 19.06 m | 0.93 |
+| 75° | 18.67 m | 16.44 m | −12.0 % [−2.44, −2.02] m | 21.07 → 19.13 m | 0.93 |
+| 90° | 18.67 m | 16.44 m | −12.0 % [−2.44, −2.02] m | 21.07 → 19.13 m | 0.93 |
+
+Fusion improves at every angle (p < 1e-30 everywhere), and the gain is **nearly flat**: it falls slightly from
+14.6 % at 5° to 12.0 % from about 75° on.
+
+The roadmap had expected the gain to *rise* with the angle. That intuition holds when the main sensor's error
+depends on direction, as for a radar that is precise in range but poor across it: a bearing from the side then
+covers its weak direction. Here the position sensor's error is the same in every direction, so the bearing's
+information is worth about the same whichever way it points. The small fall probably comes from distance rather
+than angle: the bearing sensor starts as far from the target as the position sensor at every angle, but on the
+target's crossing path it stays closer on average at small angles, where it sits near the position sensor.
+Testing the crossing-angle effect properly needs a direction-dependent primary sensor (range-bearing), which the
+tracker does not support yet.
+
+Reproduce it (writes a CSV and a results file that `reproduce` can check):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli sweep --scenario crossing_geometry --parameter crossing_angle_deg --values 5,15,30,45,60,75,90 --seeds 100 --csv crossing.csv
+```
 
 ## Limitations
 
