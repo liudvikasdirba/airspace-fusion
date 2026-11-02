@@ -365,3 +365,15 @@ def test_nis_series_short_and_invalid_windows():
     assert nis_series(TrackerResult([], {}, 0, 0.0), [m]) == []
     with pytest.raises(ValueError):
         nis_series(result, [m], window=0)
+
+
+def test_nis_series_counts_duplicate_records_once():
+    sim = simulate(SCENARIOS["reference"], 0)
+    measurements, _ = parse_records(sim.records)
+    single = run_tracker(measurements, sim.report_times, CFG)
+    doubled = run_tracker(measurements + measurements[:50], sim.report_times, CFG)
+    assert doubled.duplicate_count == 50
+    expected = {(s.sensor_id, s.measurement_type): s.nis_per_dof.tolist() for s in nis_series(single, measurements)}
+    actual = {(s.sensor_id, s.measurement_type): s.nis_per_dof.tolist()
+              for s in nis_series(doubled, measurements + measurements[:50])}
+    assert actual == expected

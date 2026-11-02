@@ -484,6 +484,8 @@ class NisSeries:
     For a consistent filter each value has mean 1, and ``window`` times ``dof`` times the rolling mean is
     chi-square with ``window * dof`` degrees of freedom; ``band`` is the central 95 % interval of the rolling
     mean under that assumption. A rolling mean above the band means the filter trusts this sensor too much.
+    Only gated (accepted) updates have a NIS, so the values are truncated at the gate: a consistent filter's
+    mean sits slightly below 1, and the gate hides the largest innovations of a badly biased sensor.
     """
 
     sensor_id: str
@@ -507,7 +509,12 @@ def nis_series(result: TrackerResult, measurements: Iterable[Measurement], windo
     from scipy import stats  # imported here so that worker processes, which never need it, start faster
 
     groups: dict[tuple[str, MeasurementType], list[tuple[datetime, float, int]]] = {}
+    seen: set[str] = set()
     for m in measurements:
+        # A repeated record (same measurement_id) was ignored by the tracker; count its NIS once.
+        if m.measurement_id in seen:
+            continue
+        seen.add(m.measurement_id)
         nis = result.update_nis.get(m.measurement_id)
         if nis is not None:
             dof = len(m.measurement_value)
