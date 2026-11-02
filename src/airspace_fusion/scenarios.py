@@ -144,6 +144,12 @@ class ScenarioFamily(BaseModel):
             raise ValueError("; ".join(problems))
         return self
 
+    def with_fixed(self, parameter: str, value: float) -> ScenarioFamily:
+        """This family with one range fixed at ``value``: every seed's other draws stay the same (a sweep point)."""
+        if parameter not in SWEEPABLE_PARAMETERS:
+            raise ValueError(f"cannot sweep {parameter!r}; sweepable parameters: {', '.join(SWEEPABLE_PARAMETERS)}")
+        return ScenarioFamily.model_validate(self.model_dump() | {parameter: value})
+
     def for_seed(self, seed: int) -> ScenarioConfig:
         """The world this family draws for ``seed``: deterministic, and independent of the simulator's streams."""
         rng = np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(FAMILY_STREAM,)))
@@ -193,6 +199,22 @@ class ScenarioFamily(BaseModel):
                 "secondary": _sensor(self.base.secondary, secondary | clutter),
             }
         )
+
+
+# Family fields that are ranges, i.e. what a sweep can fix (``with_fixed``).
+SWEEPABLE_PARAMETERS = (
+    "start_range_m",
+    "start_azimuth_deg",
+    "heading_offset_deg",
+    "speed_mps",
+    "turn_start_s",
+    "turn_duration_s",
+    "turn_rate_deg_s",
+    "crossing_angle_deg",
+    "range_ratio",
+    "bearing_bias_deg",
+    "false_observations_per_scan",
+)
 
 
 def _sensor(sensor: SensorConfig, update: Mapping[str, Any]) -> SensorConfig:

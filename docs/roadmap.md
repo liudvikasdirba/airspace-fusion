@@ -18,7 +18,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
-| M2 Varied worlds | **Started early** (2 November): scenario files, the scenario generator, five families and ADR 0008 are done. Open: the `sweep` command, results files and the crossing-angle README section. |
+| M2 Varied worlds | **Started early** (2 November): scenario files, the scenario generator, five families, ADR 0008, the `sweep` command and results files with `reproduce` are done. Open: the crossing-angle README section and a decision on the crossing-angle exit criterion, which the sweep does not support (see M2). |
 | M3 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
@@ -206,15 +206,29 @@ Deliverables:
 - [x] At least five built-in families, for example: `crossing_geometry` (angle between the sensors' lines of sight
   from 5° to 90°), `range_ratio`, `manoeuvre_intensity`, `clutter_density`, `bias_magnitude`.
   *Exactly these five, on the `reference` base.*
-- [ ] A `sweep` command that varies one parameter and reports the paired verdict at each value, as a table and as
+- [x] A `sweep` command that varies one parameter and reports the paired verdict at each value, as a table and as
   CSV for plotting.
-- A results file for every `compare` and `sweep` run, recording package version, git commit, seeds, a hash of
+  *`sweep --scenario FAMILY --parameter NAME --values ...` (a list, or `lo:hi:n`). Every point uses the same seeds
+  and, thanks to the fixed draw order, the same other draws.*
+- [x] A results file for every `compare` and `sweep` run, recording package version, git commit, seeds, a hash of
   the configuration, and all metrics. Saved under `data/results/`.
+  *Also the scenarios or families themselves (as data), the tracker settings, whether the working tree had
+  uncommitted changes, and the command line. `reproduce PATH` re-runs a file and fails if any metric differs.*
 - A README section showing fusion gain against crossing angle, with the geometry explained.
 - [x] ADR 0008: scenario file format and families.
 
-Exit criteria: at least five families; a `sweep` over crossing angle shows the expected trend (gain rising with
-crossing angle) with confidence intervals; any results file can be re-run to reproduce its numbers exactly.
+Exit criteria:
+- [x] At least five families.
+- [ ] A `sweep` over crossing angle shows the expected trend (gain rising with crossing angle) with confidence
+  intervals.
+  *Not what happens (2 November). Fusion improves at every angle from 5° to 90°, but the gain falls slightly, from
+  about −14 % RMSE at 5° to −11 % at 90° (`tests/test_statistics.py`). The expectation assumed a primary sensor
+  whose error depends on direction; this one has the same 25 m error in every direction, so a bearing's
+  cross-range information is worth about the same however it is oriented. This criterion needs a decision:
+  replace it with what the sweep shows, or add a direction-dependent primary sensor (range-bearing) so that
+  crossing angle can matter.*
+- [x] Any results file can be re-run to reproduce its numbers exactly. *`reproduce`, tested in
+  `tests/test_results.py`.*
 
 ## M3 — Honest scoring (0.5.0, 4 – 17 Jan 2027)
 

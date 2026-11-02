@@ -104,6 +104,26 @@ List every scenario and family, including those from scenario files, or print on
 .venv/Scripts/python -m airspace_fusion.cli scenarios --toml crossing_geometry
 ```
 
+Sweep one family parameter: the paired comparison at each value, over the same seeds (values as a list, or
+`lo:hi:n` for n evenly spaced values; `--csv` also writes the table for plotting):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli sweep --scenario crossing_geometry --parameter crossing_angle_deg --values 5:90:6 --seeds 50 --csv sweep.csv
+```
+
+Every `compare` and `sweep` saves a **results file** under `data/results/` (change it with `--results-dir` or the
+`AIRSPACE_FUSION_RESULTS_DIR` environment variable; `--no-results` saves nothing). It records:
+- the scenarios or families as data, the tracker settings and the seeds
+- every metric summary
+- the package version, git commit (and whether there were uncommitted changes), Python version and command line
+- a hash of the configuration
+
+`reproduce` re-runs a results file and exits with status 1 if any metric differs (wall-clock time excluded):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli reproduce data/results/<file>.json
+```
+
 `compare` and `learn` evaluate seeds in parallel worker processes, by default as many as the CPU has cores but at
 most 4. Results are identical to a serial run; only `processing_time_s` differs. Each worker needs about 100 MB:
 on a machine with little free memory use `--workers 2` or `--workers 1` (serial), and on a large machine more
@@ -231,6 +251,20 @@ Define your own scenarios and families in TOML and load them with `--scenario-fi
 .venv/Scripts/python -m airspace_fusion.cli compare --scenario-file scenarios/example.toml --scenario wide_crossing --seeds 20
 ```
 
+### Sweeps
+
+A sweep fixes one family parameter at each of several values. A family draws every parameter of a seed in a fixed
+order, so at every point each seed keeps the same target path, turn and other draws, and only the swept parameter
+changes (common random numbers). Differences between points therefore come from that parameter. For example, a
+crossing-angle sweep gives identical baseline results at every point, because the baseline ignores the bearing
+sensor.
+
+**A first finding.** Fusion improves at every crossing angle from 5° to 90°, but the gain does not rise with the
+angle: it falls slightly, from about −14 % RMSE at 5° to −11 % at 90° (30–40 seeds per point). The primary
+sensor's error is the same in every direction (25 m per axis), so a bearing's cross-range information is worth
+about the same whichever way it points. Crossing angle should matter for a primary sensor whose error depends on
+direction, such as a range-bearing sensor, which the tracker does not yet support.
+
 ## How it works
 
 ```
@@ -242,6 +276,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | `schemas.py` | Pydantic `Measurement` schema: `POSITION_2D` (2x2 covariance, m²), `RANGE_BEARING` (2x2 covariance in m/rad), `BEARING_ONLY` (angular std, rad), `DETECTION_ONLY` (no value, no uncertainty). Validates UTC timestamps, units, dimensions, finiteness, symmetric positive-definite covariances (symmetry relative to matrix scale) and probability ranges. Bearings are normalised to [−π, π). `parse_records` returns invalid records with their errors. |
 | `config.py` | All scenario, sensor and tracker parameters, and the four scenarios. |
 | `scenarios.py` | Scenario families (a world drawn per seed from their own random stream) and TOML scenario files. |
+| `results.py` | Results files: what each `compare` and `sweep` run used and produced, with provenance; `reproduce` re-runs one. |
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
 | `estimation.py` | Single-target tracker: Kalman/extended Kalman filter in plain NumPy (Joseph-form update; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
 | `estimation_stonesoup.py` | The same tracker with the filter steps done by Stone Soup, kept as a cross-check: tests require both to give the same results ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)). |

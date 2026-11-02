@@ -150,3 +150,22 @@ def test_clutter_is_rarely_accepted_and_coverage_holds(rate):
         assert accepted_false / accepted <= 0.025, (mode, rate, accepted_false, accepted)
         assert min(coverage) >= 0.95, (mode, rate, coverage)
         assert float(np.median(rmse)) <= 25.0, (mode, rate, rmse)
+
+
+def test_fusion_gain_across_crossing_angles():
+    """Sweep of the crossing angle (5-90 deg), 30 seeds per point, common random numbers.
+
+    Fusion improves at every angle. The gain does not rise with the angle, as the roadmap expected: it falls
+    slightly (about -14 % at 5 deg to -11 % at 90 deg in calibration). With an isotropic position sensor the
+    bearing's cross-range information is worth about the same in any direction; crossing angle should matter
+    for a primary sensor with direction-dependent error (e.g. range-bearing), which the tracker does not model.
+    """
+    from airspace_fusion.evaluation import sweep
+    from airspace_fusion.scenarios import FAMILIES
+
+    points = sweep(FAMILIES["crossing_geometry"], "crossing_angle_deg", [5.0, 30.0, 60.0, 90.0], TrackerConfig(),
+                   range(30))
+    for point in points:
+        assert point.summary.verdict is Verdict.IMPROVES, (point.value, point.summary.rmse_relative_change)
+    gains = [-p.summary.rmse_relative_change for p in points]
+    assert max(gains) - min(gains) < 0.06, gains  # within a few percentage points across the whole range

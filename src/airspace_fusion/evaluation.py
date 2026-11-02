@@ -20,7 +20,7 @@ import numpy as np
 
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
 from airspace_fusion.estimation import TrackerResult, chi2_quantile, run_tracker
-from airspace_fusion.scenarios import ScenarioSource
+from airspace_fusion.scenarios import ScenarioFamily, ScenarioSource
 from airspace_fusion.schemas import Measurement, RejectedRecord, parse_records
 from airspace_fusion.simulator import GroundTruth, SimulationOutput, simulate
 
@@ -286,3 +286,34 @@ def compare_modes(
         [m.position_rmse_m for m in per_mode[Mode.FUSION]],
     )
     return ComparisonSummary(scenario.name, seeds, metrics, delta, ci, rel, p, verdict)
+
+
+@dataclass(frozen=True)
+class SweepPoint:
+    value: float
+    family: ScenarioFamily  # the family with the swept parameter fixed at ``value``
+    summary: ComparisonSummary
+
+
+def sweep(
+    family: ScenarioFamily,
+    parameter: str,
+    values: Sequence[float],
+    tracker: TrackerConfig,
+    seeds: Sequence[int],
+    executor: Executor | None = None,
+) -> list[SweepPoint]:
+    """Paired comparison at each value of one family parameter, over the same seeds.
+
+    The family draws every other parameter of a seed identically at every point (common random numbers), so
+    differences between points come from the swept parameter, not from different worlds.
+    """
+    if not values:
+        raise ValueError("a sweep needs at least one value")
+    points = []
+    for value in values:
+        if not math.isfinite(value):
+            raise ValueError(f"sweep values must be finite, got {value}")
+        fixed = family.with_fixed(parameter, value)
+        points.append(SweepPoint(value, fixed, compare_modes(fixed, tracker, seeds, executor)))
+    return points

@@ -82,7 +82,8 @@ def test_compare_output_same_with_parallel_workers(capsys):
     args = ["compare", "--scenario", "reference", "--seeds", "4", "--first-seed", "7"]
 
     def without_timing(out: str) -> list[str]:
-        return [line for line in out.splitlines() if not line.startswith("processing_time_s")]
+        # Wall-clock time and the timestamped results file name differ; everything else must not.
+        return [line for line in out.splitlines() if not line.startswith(("processing_time_s", "results saved"))]
 
     serial = run_cli([*args, "--workers", "1"], capsys)
     parallel = run_cli([*args, "--workers", "2"], capsys)

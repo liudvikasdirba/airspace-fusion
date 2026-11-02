@@ -27,6 +27,12 @@ All notable changes to this project are recorded here. The format follows
   `compare`, `learn` and the new `scenarios` command, which lists everything and prints any entry as TOML.
   `scenarios/example.toml` shows both kinds.
 - `--scenario families` selects the five built-in families; `run`, `compare` and the dashboard accept families.
+- `sweep` command: the paired comparison at each value of one family parameter, over the same seeds and the same
+  other draws (common random numbers), as a table and optionally CSV (`--csv`).
+- Results files: every `compare` and `sweep` saves a JSON record under `data/results/` with the scenarios or
+  families, tracker settings, seeds, all metric summaries, a configuration hash and provenance (package version,
+  git commit, Python version, command line). `--results-dir`, `AIRSPACE_FUSION_RESULTS_DIR` and `--no-results`
+  control it. `reproduce PATH` re-runs a record and exits with status 1 if any metric differs.
 
 ### Changed
 
