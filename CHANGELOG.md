@@ -8,6 +8,11 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-02
+
+M1 finished: about 40 % faster runs with unchanged results, a per-seed run-time benchmark, sturdier parallel
+workers, and CI on Node.js 24 actions. The M1 speed targets are revised in the roadmap.
+
 ### Added
 
 - Per-seed run-time benchmark (`tests/test_benchmark.py`, slow suite). It appends per-scenario median, 90th
