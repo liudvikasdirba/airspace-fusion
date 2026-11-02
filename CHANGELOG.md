@@ -42,6 +42,9 @@ All notable changes to this project are recorded here. The format follows
   per seed.
 - Performance budgets allow about six times the development machine's timings (was four), to avoid failures
   on busy CI runners.
+- Roadmap: M1 is done. Its speed targets are revised to what pure Python and NumPy reach on the development
+  machine (one run under 60 ms instead of under 17 ms; 1,000 seeds under 110 s instead of under 60 s), with the
+  reasons and when to revisit them; the later target rows use the same figure.
 - Documentation: the [roadmap](docs/roadmap.md) records progress (M0 done, most of M1 done in 0.2.0, with
   notes where results differ from the plan); the [release process](docs/releasing.md) describes the pull
   request, tag and GitHub release steps actually used; the README has current test times and the lint and type

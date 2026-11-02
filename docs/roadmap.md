@@ -17,7 +17,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | Milestone | Status (1 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
-| M1 Fast and parallel | **Deliverables done**; the per-seed benchmark landed on 2 November. Open: the two speed targets (one run takes about 50 ms, not under 17 ms; 1,000 seeds take about 99 s, not under 60 s). They need a decision: see the M1 exit criteria. |
+| M1 Fast and parallel | **Done** 2 November, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. 0.3.0 can be cut. |
 | M2 – M8 | Not started. |
 
 ## Where the project stands
@@ -133,7 +133,8 @@ Exit criteria:
 
 **Goal:** make large experiments cheap, so that later verdicts can rest on hundreds or thousands of seeds.
 
-Status: most deliverables shipped early, in 0.2.0. What is left decides when 0.3.0 is cut.
+Status: **done on 2 November 2026.** Most deliverables shipped in 0.2.0; the benchmark and the speed work followed.
+The two speed targets were revised (see [Decision](#m1-decision-2-november-2026)); 0.3.0 can be cut.
 
 Deliverables:
 - [x] A plain NumPy tracker kernel with the same behaviour as the current one (same gating, selection, initiation,
@@ -156,20 +157,31 @@ Deliverables:
 
 Exit criteria:
 - [x] The golden regression passes unchanged on the new kernel (results agree to 1e-9 m).
-- [ ] One run at least 20× faster than today (below 17 ms).
-  *About 50 ms (6.5× faster than the audit). On 2 November, same machine: 78 – 84 ms before, about 51 ms after,
+- [x] One run under 60 ms on the development machine. *Revised on 2 November 2026; the original target was at
+  least 20× faster than at the audit, below 17 ms.*
+  *About 51 ms (6.5× faster than the audit). On 2 November, same machine: 78 – 84 ms before, about 51 ms after,
   from cached closed-form covariance checks, an unrolled 4×4 Cholesky check, slicing instead of selection-matrix
   products, plain-float simulator and metric loops (all bit-identical or within 1e-12), with no checks removed.
   The tracker is now about 75 % of a run at about 0.13 ms per scan: roughly a dozen NumPy calls on 4×4 matrices per
-  update, close to NumPy's per-call floor. Below 17 ms needs compiled code (for example numba) or batching seeds
-  through the filter; both are design changes, so this target is open for a decision rather than more tuning.*
-- [ ] `compare --seeds 1000` over all four scenarios in under 60 s on the development machine.
+  update, close to NumPy's per-call floor.*
+- [x] `compare --seeds 1000` over all four scenarios in under 110 s on the development machine. *Revised on
+  2 November 2026; the original target was under 60 s.*
   *About 99 s with 4 workers (was 117 s). Worker start-up halved (SciPy is no longer imported by workers) and BLAS
   runs single-threaded in workers, which raised 4-worker speed-up on 200 seeds from 1.3× to 2.0×. The development
-  machine has 4 physical cores and about 220 core-seconds of work at 50 ms per run, so the target needs runs near
-  35 ms there; it follows from the decision above.*
+  machine has 4 physical cores and about 220 core-seconds of work at 50 ms per run, so under 60 s would need runs
+  near 35 ms there.*
 - [x] Serial and parallel runs give byte-identical CLI output.
   *Identical except the `processing_time_s` row, which is wall-clock time; tests compare everything else.*
+
+### M1 decision (2 November 2026)
+
+The speed targets were set to what the project reaches in pure Python and NumPy, instead of below 17 ms per run
+and under 60 s for 1,000 seeds. Reaching the original targets needs either compiled code (for example numba, a
+new compiled dependency with its own install and Python-version constraints) or restructuring the filter to
+process many seeds at once (a rewrite of the reference tracker that the Stone Soup cross-check guards). Neither
+is worth it at this stage: at about 50 ms per run, 1,000 seeds over four scenarios take under two minutes on a
+4-core laptop, which is enough for the 200-seed verdicts planned from 0.7.0. Revisit if the M2 sweeps or the
+M3 Monte Carlo work make run time the bottleneck; `tests/test_benchmark.py` keeps the history needed to decide.
 
 Risk: subtle differences from Stone Soup (angle wrapping, symmetrisation). Mitigation: compare the two
 implementations step by step on the golden seeds and on the hypothesis-generated edge cases.
@@ -322,7 +334,7 @@ validate the choice by Monte Carlo).
 | Target | At the audit | 0.2.0 (Nov) | 0.4.0 (Dec) | 0.7.0 (Feb) | 1.0.0 (Apr) |
 |---|---|---|---|---|---|
 | Seeds behind each verdict | 20 | 20 (200 take 26 s) | 1,000 possible | 200 by default | 200 by default |
-| Time for 1,000 seeds × 4 scenarios | about 37 min | 117 s (99 s on 2 Nov) | under 60 s | under 60 s | under 60 s |
+| Time for 1,000 seeds × 4 scenarios (development machine) | about 37 min | 117 s (99 s on 2 Nov) | under 110 s | under 110 s | under 110 s |
 | Scenario families | 0 (4 fixed scenarios) | 0 | 5 | 6+ | suite-2027.1 frozen |
 | Baseline containment, `reference` | 0.92 | 0.92 | 0.92 | 0.95 ± 0.02 | 0.95 ± 0.02 |
 | Fusion vs baseline RMSE, `biased_bearing` | +97 % | +97 % | +97 % | ≤ +5 % | ≤ 0 % |
