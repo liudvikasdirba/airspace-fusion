@@ -22,6 +22,8 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- CI uses `actions/checkout`, `actions/setup-python` and `actions/upload-artifact` v7, which run on
+  Node.js 24; the v4/v5 versions ran on the deprecated Node.js 20.
 - Parallel runs send seeds to workers in batches, so the scenario and tracker settings are not pickled once
   per seed.
 - Performance budgets allow about six times the development machine's timings (was four), to avoid failures
