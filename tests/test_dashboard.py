@@ -107,6 +107,19 @@ def test_ellipses_drawn_every_ten_tracked_scans():
         assert n_ellipses == math.ceil(tracked / 10)
 
 
+def test_family_runs_and_shows_the_drawn_world():
+    at = start()
+    widget(at, "selectbox", "Scenario").set_value("crossing_geometry")
+    widget(at, "number_input", "Random seed").set_value(4)
+    at.run()
+    click(at, "Run simulation")
+    captions = " ".join(c.value for c in at.caption)
+    assert "World: crossing_geometry seed 4:" in captions
+    assert "different world for each seed" in captions
+    trajectory, *_ = figures(at)
+    assert trajectory["data"]
+
+
 def test_run_button_shows_metrics_for_selected_settings():
     at = start()
     widget(at, "selectbox", "Scenario").set_value("biased_bearing")

@@ -108,13 +108,14 @@ ALLOWED_IMPORTS = {
     "schemas": set(),
     "config": {"schemas"},
     "simulator": {"config", "schemas"},
+    "scenarios": {"config"},  # families draw ScenarioConfigs; they never see the simulator or the tracker
     "estimation": {"config", "schemas"},
     "estimation_stonesoup": {"config", "estimation", "schemas"},
-    "evaluation": {"config", "estimation", "schemas", "simulator"},
+    "evaluation": {"config", "estimation", "scenarios", "schemas", "simulator"},
     "learning": {"config", "evaluation"},
-    "agents": {"config", "evaluation", "learning"},
-    "cli": {"agents", "config", "evaluation", "learning"},
-    "app": {"config", "estimation", "evaluation", "schemas"},
+    "agents": {"config", "evaluation", "learning", "scenarios"},
+    "cli": {"agents", "config", "evaluation", "learning", "scenarios"},
+    "app": {"config", "estimation", "evaluation", "scenarios", "schemas"},
 }
 
 

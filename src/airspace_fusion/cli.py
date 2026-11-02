@@ -24,6 +24,14 @@ from airspace_fusion.evaluation import (
     seed_executor,
 )
 from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
+from airspace_fusion.scenarios import (
+    FAMILIES,
+    ScenarioFamily,
+    ScenarioFileError,
+    ScenarioSource,
+    available_sources,
+    to_toml,
+)
 
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
@@ -56,11 +64,39 @@ def _positive_int(text: str) -> int:
     return value
 
 
+SCENARIO_HELP = (
+    "a scenario or family name (list them with 'airspace-fusion scenarios'); 'all' is the four built-in scenarios, "
+    "'families' the five built-in families"
+)
+
+
+def _sources(args: argparse.Namespace) -> dict[str, ScenarioSource]:
+    try:
+        return available_sources(args.scenario_file or ())
+    except ScenarioFileError as exc:
+        _usage_error(args, str(exc))
+
+
+def _selected(args: argparse.Namespace, groups: bool = True) -> list[ScenarioSource]:
+    """The scenarios or families named by ``--scenario``: one name, or 'all' / 'families' where allowed."""
+    sources = _sources(args)
+    if groups and args.scenario == "all":
+        return list(SCENARIOS.values())
+    if groups and args.scenario == "families":
+        return list(FAMILIES.values())
+    if args.scenario not in sources:
+        _usage_error(args, f"unknown scenario {args.scenario!r}; list them with 'airspace-fusion scenarios'")
+    return [sources[args.scenario]]
+
+
 def _run(args: argparse.Namespace) -> None:
-    scenario = SCENARIOS[args.scenario]
+    (source,) = _selected(args, groups=False)
+    scenario = source.for_seed(args.seed)
     run = run_single(scenario, TrackerConfig(), args.seed)
     print(f"scenario={scenario.name} seed={args.seed} records={len(run.simulation.records)} "
           f"valid={len(run.measurements)} invalid={len(run.invalid_records)}")
+    if isinstance(source, ScenarioFamily):
+        print(f"world: {scenario.description}")
     print(f"{'metric':<24}{'baseline':>14}{'fusion':>14}")
     for name in METRIC_NAMES:
         values = [getattr(run.modes[m].metrics, name) for m in Mode]
@@ -80,20 +116,24 @@ def _load_rules(args: argparse.Namespace, must_exist: bool) -> RuleBook:
 
 
 def _compare(args: argparse.Namespace) -> None:
-    names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+    sources = _selected(args)
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
     # An explicitly named rule book must exist: silently falling back to defaults would mislabel the results.
     rules = _load_rules(args, must_exist=True) if args.rules else None
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
     with seed_executor(args.workers, len(seeds)) as executor:
-        for name in names:
-            _print_comparison(name, seeds, rules, executor)
+        for source in sources:
+            _print_comparison(source, seeds, rules, executor)
 
 
-def _print_comparison(name: str, seeds: list[int], rules: RuleBook | None, executor: Executor | None) -> None:
+def _print_comparison(
+    source: ScenarioSource, seeds: list[int], rules: RuleBook | None, executor: Executor | None
+) -> None:
+    name = source.name
     tracker = rules.tracker_for(name) if rules else TrackerConfig()
-    s = compare_modes(SCENARIOS[name], tracker, seeds, executor)
-    print(f"== {name}: {SCENARIOS[name].description}")
+    s = compare_modes(source, tracker, seeds, executor)
+    kind = " (family: a different world for each seed)" if isinstance(source, ScenarioFamily) else ""
+    print(f"== {name}{kind}: {source.description}")
     if rules:
         print(f"learned rule book v{rules.version}: {describe_tracker(tracker)}, fusion "
               f"{'allowed' if rules.fusion_enabled(name) else 'recommended against'}")
@@ -108,10 +148,10 @@ def _print_comparison(name: str, seeds: list[int], rules: RuleBook | None, execu
 
 
 def _learn(args: argparse.Namespace) -> int:
-    names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+    sources = _selected(args)
     try:
         task = LearningTask(
-            scenarios=tuple(SCENARIOS[n] for n in names),
+            scenarios=tuple(sources),
             train_seeds=tuple(range(args.train_first_seed, args.train_first_seed + args.train_seeds)),
             holdout_seeds=tuple(range(args.holdout_first_seed, args.holdout_first_seed + args.holdout_seeds)),
             max_candidates=args.max_candidates,
@@ -138,6 +178,28 @@ def _learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scenarios(args: argparse.Namespace) -> None:
+    sources = _sources(args)
+    if args.toml:
+        if args.toml not in sources:
+            _usage_error(args, f"unknown scenario {args.toml!r}")
+        print(to_toml(sources[args.toml]), end="")
+        return
+    from_files = [s for s in sources.values() if s.name not in SCENARIOS and s.name not in FAMILIES]
+    groups: list[tuple[str, list[ScenarioSource]]] = [
+        ("Built-in scenarios", list(SCENARIOS.values())),
+        ("Built-in families (a different world for each seed)", list(FAMILIES.values())),
+        ("From scenario files", from_files),
+    ]
+    for title, entries in groups:
+        if entries:
+            print(title)
+            for entry in entries:
+                kind = "family" if isinstance(entry, ScenarioFamily) else "scenario"
+                print(f"  {entry.name:<22} {kind:<9} {entry.description}")
+            print()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command line. Returns the process exit status (non-zero when a learning run had failures)."""
     parser = argparse.ArgumentParser(prog="airspace-fusion", description=__doc__)
@@ -145,12 +207,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_p = sub.add_parser("run", help="single seeded simulation, both modes")
-    run_p.add_argument("--scenario", choices=list(SCENARIOS), default=DEFAULT_SCENARIO)
+    run_p.add_argument("--scenario", default=DEFAULT_SCENARIO, help="a scenario or family name")
     run_p.add_argument("--seed", type=int, default=0)
-    run_p.set_defaults(func=_run)
+    run_p.set_defaults(func=_run, parser=run_p)
 
     cmp_p = sub.add_parser("compare", help="multi-seed baseline vs fusion comparison")
-    cmp_p.add_argument("--scenario", choices=[*SCENARIOS, "all"], default="all")
+    cmp_p.add_argument("--scenario", default="all", help=SCENARIO_HELP)
     cmp_p.add_argument("--seeds", type=_positive_int, default=20)
     cmp_p.add_argument("--first-seed", type=int, default=0)
     cmp_p.add_argument("--rules", type=Path, help="use the tracker settings from a learned rule book")
@@ -158,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     cmp_p.set_defaults(func=_compare, parser=cmp_p)
 
     learn_p = sub.add_parser("learn", help="tune tracker settings per scenario; results go to a rule book")
-    learn_p.add_argument("--scenario", choices=[*SCENARIOS, "all"], default="all")
+    learn_p.add_argument("--scenario", default="all", help=SCENARIO_HELP)
     learn_p.add_argument("--rounds", type=_positive_int, default=2)
     learn_p.add_argument("--train-seeds", type=_positive_int, default=6)
     learn_p.add_argument("--train-first-seed", type=int, default=1000)
@@ -169,6 +231,14 @@ def main(argv: list[str] | None = None) -> int:
     learn_p.add_argument("--log", type=Path, default=DEFAULT_LOG_PATH)
     learn_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
     learn_p.set_defaults(func=_learn, parser=learn_p)
+
+    scn_p = sub.add_parser("scenarios", help="list scenarios and families, or print one as TOML")
+    scn_p.add_argument("--toml", metavar="NAME", help="print this scenario or family as a scenario file")
+    scn_p.set_defaults(func=_scenarios, parser=scn_p)
+
+    for subparser in (run_p, cmp_p, learn_p, scn_p):
+        subparser.add_argument("--scenario-file", type=Path, action="append", metavar="PATH",
+                               help="TOML file with extra [[scenario]] and [[family]] entries (repeatable)")
 
     args = parser.parse_args(argv)
     try:

@@ -36,8 +36,11 @@ def metric_rows(out: str) -> dict[str, list[str]]:
         (["compare", "--workers", "0"], "must be at least 1"),
         (["learn", "--workers", "-1"], "must be at least 1"),
         (["run", "--seed", "1.5"], "invalid int value"),
-        (["run", "--scenario", "nope"], "invalid choice"),
-        (["compare", "--scenario", "nope"], "invalid choice"),
+        (["run", "--scenario", "nope"], "unknown scenario 'nope'"),
+        (["run", "--scenario", "all"], "unknown scenario 'all'"),  # run takes one scenario or family
+        (["compare", "--scenario", "nope"], "unknown scenario 'nope'"),
+        (["learn", "--scenario", "nope"], "unknown scenario 'nope'"),
+        (["scenarios", "--toml", "nope"], "unknown scenario 'nope'"),
         ([], "required"),
         (["bogus"], "invalid choice"),
     ],

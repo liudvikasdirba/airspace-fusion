@@ -79,6 +79,10 @@ class ScenarioConfig(BaseModel):
     def num_steps(self) -> int:
         return int(round(self.duration_s / self.time_step_s)) + 1
 
+    def for_seed(self, seed: int) -> ScenarioConfig:
+        """The world for ``seed``: a fixed scenario is the same for every seed (a ``ScenarioFamily`` is not)."""
+        return self
+
 
 class TrackerConfig(BaseModel):
     """Single-target tracker settings, shared by the baseline and fusion modes."""

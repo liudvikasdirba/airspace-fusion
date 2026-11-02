@@ -10,9 +10,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig, with_sensor_overrides
+from airspace_fusion.config import DEFAULT_SCENARIO, TrackerConfig
 from airspace_fusion.estimation import NIS_WINDOW, Estimate, nis_series
 from airspace_fusion.evaluation import CHI2_2DOF_95, METRIC_NAMES, Mode, SingleRun, compare_modes, run_single
+from airspace_fusion.scenarios import ScenarioFamily, builtin_sources, with_overrides
 from airspace_fusion.schemas import MeasurementType
 
 # Categorical slots 1-2 of the validated reference palette; truth and observations stay neutral.
@@ -226,11 +227,16 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Simulation")
+        sources = builtin_sources()
         # With an index set these widgets always return an option; newer Streamlit types still allow None.
-        scenario_name = (
-            st.selectbox("Scenario", list(SCENARIOS), index=list(SCENARIOS).index(DEFAULT_SCENARIO)) or DEFAULT_SCENARIO
-        )
-        st.caption(SCENARIOS[scenario_name].description)
+        scenario_name = st.selectbox(
+            "Scenario or family", list(sources), index=list(sources).index(DEFAULT_SCENARIO),
+            format_func=lambda name: f"{name} (family)" if isinstance(sources[name], ScenarioFamily) else name,
+        ) or DEFAULT_SCENARIO
+        st.caption(sources[scenario_name].description)
+        if isinstance(sources[scenario_name], ScenarioFamily):
+            st.caption("A family draws a different world for each seed: the seed picks the geometry as well as "
+                       "the noise.")
         seed = st.number_input("Random seed", min_value=0, max_value=1_000_000, value=0, step=1)
         noise = st.slider("Noise multiplier (both sensors)", 0.25, 3.0, 1.0, 0.25)
         miss = st.slider("Missed-observation probability (both sensors)", 0.0, 0.8, 0.1, 0.05)
@@ -241,10 +247,10 @@ def main() -> None:
         n_seeds = st.number_input("Seeds for multi-seed comparison", min_value=2, max_value=100, value=10)
         compare_clicked = st.button("Run multi-seed comparison", width="stretch")
 
-    scenario = with_sensor_overrides(SCENARIOS[scenario_name], noise, miss)
+    scenario = with_overrides(sources[scenario_name], noise, miss)
     tracker = TrackerConfig()
     if run_clicked or "run" not in st.session_state:
-        st.session_state["run"] = run_single(scenario, tracker, int(seed))
+        st.session_state["run"] = run_single(scenario.for_seed(int(seed)), tracker, int(seed))
     run: SingleRun = st.session_state["run"]
     modes = {"Both": list(Mode), "Baseline only": [Mode.BASELINE], "Fusion only": [Mode.FUSION]}[view]
 
@@ -255,6 +261,8 @@ def main() -> None:
         f"bearing noise {math.degrees(sim_scn.secondary.noise_std):.2f} deg, "
         f"miss probability {1 - sim_scn.primary.detection_probability:.2f}. Both modes use the same truth and records."
     )
+    if sim_scn.description.startswith(f"{sim_scn.name} seed "):  # drawn by a family: say which world
+        st.caption(f"World: {sim_scn.description}")
 
     # Stacked rather than side by side: the metrics table and legends need the full width on narrow windows.
     st.plotly_chart(trajectory_figure(run, modes, show_bearings), width="stretch")
