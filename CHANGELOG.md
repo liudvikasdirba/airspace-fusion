@@ -14,15 +14,19 @@ All notable changes to this project are recorded here. The format follows
   decides the adjusted p-values and verdicts. Format 2 files are rejected; re-run them.
 - `compare` over several scenarios prints a progress line to stderr after each one, since verdicts wait for
   every p-value.
+- README sealed-test table shows the new paired p-values. The roadmap records the post-release review of 0.5.0,
+  marks audit findings 2, 4 and 5 resolved, and adds an "after 0.5.0" column to its status table.
 
 ### Fixed
 
 - "Fusion over-confident" for low containment now also requires fusion's containment to be below the
   baseline's. Before, a fusion filter better calibrated than a badly calibrated baseline was called harmful,
-  and `learn` switched fusion off. No built-in scenario changes verdict.
+  and `learn` switched fusion off. No built-in scenario changes verdict ([ADR 0009](docs/adr/0009-verdict-v2.md),
+  amended).
 - `learn`'s paired acceptance test scores each seed with the calibration factor of the whole set of seeds, as
   the 2 % margin does, instead of each seed's own containment, which penalised noise. Learned settings and
-  scores are unchanged; the paired p-values are much smaller (sealed test p < 1e-100).
+  scores are unchanged; the paired p-values are much smaller (sealed test p < 1e-100)
+  ([ADR 0010](docs/adr/0010-learning-evaluation.md), amended).
 - Loading a results file now rejects a Holm family that does not place every entry exactly once. Before,
   `reproduce` silently skipped entries the family left out, or failed with an `IndexError`.
 
