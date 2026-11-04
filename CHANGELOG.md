@@ -8,6 +8,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-04
+
+M3 finished: verdict v2 with the "fusion over-confident" verdict and Holm-corrected p-values over 200 seeds, and a
+learning loop judged on fresh held-out seeds with a paired test and a sealed test set. `biased_bearing` is now
+"fusion over-confident"; every setting `learn` accepts improves the score on the sealed test seeds.
+
 ### Added
 
 - Verdict "fusion over-confident" (verdict v2, [ADR 0009](docs/adr/0009-verdict-v2.md)): given when fusion's
