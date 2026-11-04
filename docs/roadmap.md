@@ -1,7 +1,7 @@
 ---
 title: Roadmap to April 2027
 status: draft
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Roadmap to April 2027
@@ -14,11 +14,11 @@ commitment. Review it at every release and update the dates and the `updated` fi
 
 Finished deliverables and exit criteria are ticked below, with a note where the result differs from the plan.
 
-| Milestone | Status (1 November 2026) |
+| Milestone | Status (4 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
-| M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0** on 2 November. |
+| M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
