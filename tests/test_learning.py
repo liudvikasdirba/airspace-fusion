@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -463,9 +464,19 @@ def test_seed_scores_and_paired_improvement():
         seed_scores(ComparisonSummary("s", (0, 1), {}, 0.0, (0.0, 0.0), 0.0, 1.0, Verdict.IMPROVES), [Mode.BASELINE])
 
 
-def replace_per_seed(s: ComparisonSummary, rmse: dict[Mode, list[float]]) -> ComparisonSummary:
-    from dataclasses import replace
+def test_seed_scores_average_to_the_score():
+    """The paired test and the 2 % margin judge the same quantity (ADR 0010)."""
+    seeds = tuple(range(5))  # seed_noise sums to zero over these, so the per-seed RMSEs average to the mean
+    s = summary({Mode.BASELINE: 20.0, Mode.FUSION: 16.0}, {Mode.BASELINE: 0.90, Mode.FUSION: 0.80}, seeds=seeds)
+    for modes in ([Mode.BASELINE], [Mode.BASELINE, Mode.FUSION]):
+        assert sum(seed_scores(s, modes)) / len(seeds) == pytest.approx(score(s, modes))
+    # Calibration comes from the mean containment: per-seed spread around the target is not penalised.
+    spread = replace(s, per_seed={m: tuple(replace(x, containment_95=c) for x, c in zip(s.per_seed[m], [0.85, 1.0] * 3))
+                                  for m in Mode})
+    assert seed_scores(spread, [Mode.BASELINE]) == seed_scores(s, [Mode.BASELINE])
 
+
+def replace_per_seed(s: ComparisonSummary, rmse: dict[Mode, list[float]]) -> ComparisonSummary:
     per_seed = dict(s.per_seed) | {
         mode: tuple(run_metrics(r, m.containment_95) for r, m in zip(values, s.per_seed[mode]))
         for mode, values in rmse.items()

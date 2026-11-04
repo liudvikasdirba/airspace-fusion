@@ -92,28 +92,36 @@ def scored_modes(fusion_enabled: bool) -> tuple[Mode, ...]:
     return (Mode.BASELINE, Mode.FUSION) if fusion_enabled else (Mode.BASELINE,)
 
 
+def _calibration_factor(summary: ComparisonSummary, mode: Mode) -> float:
+    """How much a mode's RMSE is inflated in the score for its mean containment missing the target."""
+    containment = summary.metrics[mode]["containment_95"].mean
+    return 1.0 + CONTAINMENT_WEIGHT * abs(containment - TARGET_CONTAINMENT)
+
+
 def score(summary: ComparisonSummary, modes: Sequence[Mode]) -> float:
     """Lower is better. ``inf`` when any scored mode never formed a track."""
     terms = []
     for mode in modes:
-        rmse = summary.metrics[mode]["position_rmse_m"].mean
-        containment = summary.metrics[mode]["containment_95"].mean
-        if math.isnan(rmse) or math.isnan(containment):
+        term = summary.metrics[mode]["position_rmse_m"].mean * _calibration_factor(summary, mode)
+        if math.isnan(term):
             return math.inf
-        terms.append(rmse * (1.0 + CONTAINMENT_WEIGHT * abs(containment - TARGET_CONTAINMENT)))
+        terms.append(term)
     return sum(terms) / len(terms)
 
 
-def _seed_score(rmse: float, containment: float) -> float:
-    return rmse * (1.0 + CONTAINMENT_WEIGHT * abs(containment - TARGET_CONTAINMENT))
-
-
 def seed_scores(summary: ComparisonSummary, modes: Sequence[Mode]) -> list[float]:
-    """``score`` for each seed separately (NaN where a scored mode had no track), in seed order."""
+    """Each seed's share of ``score``, in seed order (NaN where a scored mode had no track).
+
+    A seed's RMSE is weighted by the summary's calibration factor, computed from the mean containment as in
+    ``score``, so when every seed has a track the mean of these values is ``score`` exactly and the paired test
+    judges the same quantity as the margin. Calibration is a property of the set of seeds, not of one seed: one
+    run's containment is a fraction of a few dozen scans, and penalising its spread would penalise noise.
+    """
     if not summary.per_seed:
         raise ValueError(f"{summary.scenario}: the summary has no per-seed metrics for a paired test")
+    factors = [_calibration_factor(summary, mode) for mode in modes]
     columns = [summary.per_seed[mode] for mode in modes]
-    return [sum(_seed_score(m.position_rmse_m, m.containment_95) for m in row) / len(row) for row in zip(*columns)]
+    return [sum(m.position_rmse_m * f for m, f in zip(row, factors)) / len(row) for row in zip(*columns)]
 
 
 def paired_improvement_p(

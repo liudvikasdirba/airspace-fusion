@@ -199,6 +199,19 @@ class ComparisonSummary:
     # equality: wall-clock time differs between otherwise identical runs.
     per_seed: dict[Mode, tuple[RunMetrics, ...]] = field(default_factory=dict, compare=False, repr=False)
 
+    @property
+    def decision_p_value(self) -> float:
+        """The RMSE p-value the verdict rests on: Holm-adjusted when there is one, raw otherwise."""
+        return self.rmse_p_value if self.rmse_p_adjusted is None else self.rmse_p_adjusted
+
+    def mean_containment(self) -> dict[Mode, float]:
+        return mean_containment(self.metrics)
+
+
+def mean_containment(metrics: dict[Mode, dict[str, MetricSummary]]) -> dict[Mode, float]:
+    """Each mode's mean 95 % containment, the input to the containment rules of ADR 0009."""
+    return {mode: metrics[mode]["containment_95"].mean for mode in Mode}
+
 
 def paired_verdict(
     baseline: Sequence[float], fusion: Sequence[float]
@@ -237,13 +250,15 @@ def rmse_verdict(mean_delta: float, relative_change: float, p_value: float) -> V
 def verdict_v2(rmse: Verdict, baseline_containment: float, fusion_containment: float) -> Verdict:
     """Add the containment rules of ADR 0009 to the RMSE verdict.
 
-    Fusion is over-confident when its mean 95 % containment is below 0.85, or when it improves RMSE but its
-    containment falls more than 0.03 below the baseline's: the accuracy gain then comes with an uncertainty
-    the filter understates. Without a containment value for both modes the RMSE verdict stands.
+    Fusion is over-confident when its mean 95 % containment is below 0.85 and below the baseline's, or when it
+    improves RMSE but its containment falls more than 0.03 below the baseline's: the accuracy gain then comes
+    with an uncertainty the filter understates. A fusion filter at least as well calibrated as the baseline is
+    never called over-confident: the verdict compares the two modes, and switching fusion off would not help.
+    Without a containment value for both modes the RMSE verdict stands.
     """
     if rmse is Verdict.INSUFFICIENT_DATA or math.isnan(baseline_containment) or math.isnan(fusion_containment):
         return rmse
-    if fusion_containment < OVER_CONFIDENT_CONTAINMENT:
+    if fusion_containment < min(OVER_CONFIDENT_CONTAINMENT, baseline_containment):
         return Verdict.OVER_CONFIDENT
     if rmse is Verdict.IMPROVES and fusion_containment < baseline_containment - MAX_CONTAINMENT_DROP:
         return Verdict.OVER_CONFIDENT
@@ -255,21 +270,26 @@ def summary_verdict(summary: ComparisonSummary, p_value: float) -> Verdict:
     if summary.verdict is Verdict.INSUFFICIENT_DATA:
         return summary.verdict
     rmse = rmse_verdict(summary.rmse_delta_mean_m, summary.rmse_relative_change, p_value)
-    containment = {mode: summary.metrics[mode]["containment_95"].mean for mode in Mode}
+    containment = summary.mean_containment()
     return verdict_v2(rmse, containment[Mode.BASELINE], containment[Mode.FUSION])
+
+
+def with_adjusted_p(summary: ComparisonSummary, p_adjusted: float) -> ComparisonSummary:
+    """``summary`` with its Holm-adjusted p-value and the verdict that follows from it."""
+    return replace(summary, rmse_p_adjusted=p_adjusted, verdict=summary_verdict(summary, p_adjusted))
 
 
 def explain_verdict(summary: ComparisonSummary) -> str:
     """Why ``summary`` got its verdict, in one sentence."""
-    p = summary.rmse_p_value if summary.rmse_p_adjusted is None else summary.rmse_p_adjusted
+    p = summary.decision_p_value
     p_text = "p" if summary.rmse_p_adjusted is None else "Holm-adjusted p"
-    containment = {mode: summary.metrics[mode]["containment_95"].mean for mode in Mode}
+    containment = summary.mean_containment()
     if summary.verdict is Verdict.INSUFFICIENT_DATA:
         return "fewer than two seeds have an RMSE in both modes"
     if summary.verdict is Verdict.OVER_CONFIDENT:
-        if containment[Mode.FUSION] < OVER_CONFIDENT_CONTAINMENT:
-            return (f"fusion's 95 % containment is {containment[Mode.FUSION]:.2f}, "
-                    f"below {OVER_CONFIDENT_CONTAINMENT:.2f}")
+        if containment[Mode.FUSION] < min(OVER_CONFIDENT_CONTAINMENT, containment[Mode.BASELINE]):
+            return (f"fusion's 95 % containment is {containment[Mode.FUSION]:.2f}, below "
+                    f"{OVER_CONFIDENT_CONTAINMENT:.2f} and below the baseline's ({containment[Mode.BASELINE]:.2f})")
         return (f"RMSE improves ({p_text} = {p:.3g}), but fusion's 95 % containment "
                 f"({containment[Mode.FUSION]:.2f}) is more than {MAX_CONTAINMENT_DROP:.2f} "
                 f"below the baseline's ({containment[Mode.BASELINE]:.2f})")
@@ -304,7 +324,7 @@ def with_holm(summaries: Sequence[ComparisonSummary]) -> list[ComparisonSummary]
     if len(summaries) < 2:
         return list(summaries)
     adjusted = holm_adjust([s.rmse_p_value for s in summaries])
-    return [replace(s, rmse_p_adjusted=p, verdict=summary_verdict(s, p)) for s, p in zip(summaries, adjusted)]
+    return [with_adjusted_p(s, p) for s, p in zip(summaries, adjusted)]
 
 
 METRIC_NAMES = (
@@ -378,7 +398,7 @@ def compare_modes(
         [m.position_rmse_m for m in per_mode[Mode.BASELINE]],
         [m.position_rmse_m for m in per_mode[Mode.FUSION]],
     )
-    containment = {mode: metrics[mode]["containment_95"].mean for mode in Mode}
+    containment = mean_containment(metrics)
     verdict = verdict_v2(rmse, containment[Mode.BASELINE], containment[Mode.FUSION])
     return ComparisonSummary(
         scenario.name, seeds, metrics, delta, ci, rel, p, verdict,

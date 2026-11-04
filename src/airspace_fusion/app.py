@@ -303,8 +303,8 @@ def main() -> None:
             f"{s.rmse_relative_change:+.1%}, paired t-test p = {s.rmse_p_value:.3g}. Why: {explain_verdict(s)}."
         )
         st.caption("Verdict rules: a change counts only if p < 0.05 and |relative change| >= 5%. Fusion is "
-                   "over-confident if its 95% containment is below 0.85, or if it improves RMSE while its "
-                   "containment is more than 0.03 below the baseline's.")
+                   "over-confident if its 95% containment is below 0.85 and below the baseline's, or if it "
+                   "improves RMSE while its containment is more than 0.03 below the baseline's.")
         st.caption("Settings in the sidebar apply to the next comparison run; this table reflects the last one run.")
 
     with st.expander("Limitations of this simulation", expanded=False):

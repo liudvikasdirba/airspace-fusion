@@ -234,6 +234,14 @@ def test_low_fusion_containment_is_over_confident_whatever_rmse_does(rmse):
     assert verdict_v2(rmse, 0.95, 0.85) is (Verdict.OVER_CONFIDENT if rmse is Verdict.IMPROVES else rmse)
 
 
+@pytest.mark.parametrize("rmse", [Verdict.IMPROVES, Verdict.WORSENS, Verdict.NO_MATERIAL_CHANGE])
+def test_low_containment_is_not_fusions_fault_when_the_baseline_is_no_better(rmse):
+    # Both filters are over-confident and fusion is the better calibrated one: turning fusion off would not help.
+    assert verdict_v2(rmse, 0.70, 0.84) is rmse
+    assert verdict_v2(rmse, 0.84, 0.84) is rmse
+    assert verdict_v2(rmse, 0.845, 0.84) is Verdict.OVER_CONFIDENT  # below the baseline, however slightly
+
+
 def test_improvement_needs_containment_close_to_the_baseline():
     assert verdict_v2(Verdict.IMPROVES, 0.93, 0.90) is Verdict.IMPROVES  # exactly 0.03 below: allowed
     assert verdict_v2(Verdict.IMPROVES, 0.93, 0.899) is Verdict.OVER_CONFIDENT
@@ -282,7 +290,8 @@ def test_with_holm_corrects_a_family_and_leaves_one_comparison_alone():
 
 
 def test_explain_verdict_names_the_deciding_rule():
-    assert "below 0.85" in explain_verdict(summary(1e-9, 0.9, (0.93, 0.3), Verdict.OVER_CONFIDENT))
+    assert "below 0.85 and below the baseline's (0.93)" in explain_verdict(
+        summary(1e-9, 0.9, (0.93, 0.3), Verdict.OVER_CONFIDENT))
     assert "more than 0.03 below" in explain_verdict(summary(1e-9, -0.2, (0.95, 0.9), Verdict.OVER_CONFIDENT))
     assert "not below 0.05" in explain_verdict(summary(0.4, -0.2, verdict=Verdict.NO_MATERIAL_CHANGE))
     assert "under 5%" in explain_verdict(summary(1e-9, -0.01, verdict=Verdict.NO_MATERIAL_CHANGE))
