@@ -13,15 +13,21 @@ from airspace_fusion.estimation import Disposition, Estimate, TrackerResult
 from airspace_fusion.evaluation import (
     GOSPA_CUTOFF_M,
     MIN_PARALLEL_SEEDS,
+    ComparisonSummary,
+    MetricSummary,
     Mode,
     Verdict,
     compare_modes,
     evaluate_run,
+    explain_verdict,
     gospa,
+    holm_adjust,
     paired_verdict,
     run_single,
     seed_executor,
     sensors_for_mode,
+    verdict_v2,
+    with_holm,
 )
 from airspace_fusion.simulator import GroundTruth
 
@@ -217,3 +223,75 @@ def test_gospa_matches_stone_soup(scenario):
             squares.append(float(single_time.value["distance"]) ** 2)
         expected = math.sqrt(sum(squares) / len(squares))
         assert run.modes[mode].metrics.gospa_m == pytest.approx(expected, rel=1e-9), mode
+
+
+# -- verdict v2 (ADR 0009) -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rmse", [Verdict.IMPROVES, Verdict.WORSENS, Verdict.NO_MATERIAL_CHANGE])
+def test_low_fusion_containment_is_over_confident_whatever_rmse_does(rmse):
+    assert verdict_v2(rmse, 0.95, 0.84) is Verdict.OVER_CONFIDENT
+    assert verdict_v2(rmse, 0.95, 0.85) is (Verdict.OVER_CONFIDENT if rmse is Verdict.IMPROVES else rmse)
+
+
+def test_improvement_needs_containment_close_to_the_baseline():
+    assert verdict_v2(Verdict.IMPROVES, 0.93, 0.90) is Verdict.IMPROVES  # exactly 0.03 below: allowed
+    assert verdict_v2(Verdict.IMPROVES, 0.93, 0.899) is Verdict.OVER_CONFIDENT
+    assert verdict_v2(Verdict.IMPROVES, 0.88, 0.97) is Verdict.IMPROVES  # better containment is fine
+    # The drop rule guards improvements only; a worse or unchanged RMSE keeps its verdict.
+    assert verdict_v2(Verdict.WORSENS, 0.95, 0.88) is Verdict.WORSENS
+    assert verdict_v2(Verdict.NO_MATERIAL_CHANGE, 0.95, 0.88) is Verdict.NO_MATERIAL_CHANGE
+
+
+def test_verdict_v2_without_containment_or_data():
+    assert verdict_v2(Verdict.IMPROVES, math.nan, 0.5) is Verdict.IMPROVES
+    assert verdict_v2(Verdict.IMPROVES, 0.95, math.nan) is Verdict.IMPROVES
+    assert verdict_v2(Verdict.INSUFFICIENT_DATA, 0.95, 0.1) is Verdict.INSUFFICIENT_DATA
+
+
+def test_harmful_verdicts():
+    assert {v for v in Verdict if v.harmful} == {Verdict.WORSENS, Verdict.OVER_CONFIDENT}
+
+
+def test_holm_adjust_known_values():
+    # Sorted 0.01, 0.03, 0.04 -> 3 x 0.01, 2 x 0.03, max(0.06, 1 x 0.04): step-down never decreases.
+    assert holm_adjust([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.06, 0.06])
+    assert holm_adjust([0.5, 0.9]) == [1.0, 1.0]  # capped at 1
+    adjusted = holm_adjust([0.02, math.nan, 0.01])  # NaN is not a test: two tests, not three
+    assert adjusted[0] == pytest.approx(0.02) and math.isnan(adjusted[1]) and adjusted[2] == pytest.approx(0.02)
+    assert holm_adjust([]) == []
+
+
+def summary(p: float, rel: float, containment: tuple[float, float] = (0.93, 0.93),
+            verdict: Verdict = Verdict.IMPROVES) -> ComparisonSummary:
+    metrics = {mode: {"containment_95": MetricSummary(c, 0.0, 10)} for mode, c in zip(Mode, containment)}
+    return ComparisonSummary("s", (0, 1), metrics, -1.0 if rel < 0 else 1.0, (0.0, 0.0), rel, p, verdict)
+
+
+def test_with_holm_corrects_a_family_and_leaves_one_comparison_alone():
+    single = summary(0.03, -0.1)
+    assert with_holm([single]) == [single] and single.rmse_p_adjusted is None
+    weak, strong, harmful = with_holm([
+        summary(0.03, -0.1), summary(1e-6, -0.2), summary(0.5, 0.3, (0.93, 0.5), Verdict.OVER_CONFIDENT)])
+    # 0.03 alone would count; ranked second of three tests it becomes 0.03 x 2 = 0.06.
+    assert weak.rmse_p_adjusted == pytest.approx(0.06) and weak.verdict is Verdict.NO_MATERIAL_CHANGE
+    assert strong.rmse_p_adjusted == pytest.approx(3e-6) and strong.verdict is Verdict.IMPROVES
+    assert harmful.verdict is Verdict.OVER_CONFIDENT  # containment rules still apply after correction
+    assert with_holm([summary(math.nan, math.nan, verdict=Verdict.INSUFFICIENT_DATA),
+                      summary(0.01, -0.1)])[0].verdict is Verdict.INSUFFICIENT_DATA
+
+
+def test_explain_verdict_names_the_deciding_rule():
+    assert "below 0.85" in explain_verdict(summary(1e-9, 0.9, (0.93, 0.3), Verdict.OVER_CONFIDENT))
+    assert "more than 0.03 below" in explain_verdict(summary(1e-9, -0.2, (0.95, 0.9), Verdict.OVER_CONFIDENT))
+    assert "not below 0.05" in explain_verdict(summary(0.4, -0.2, verdict=Verdict.NO_MATERIAL_CHANGE))
+    assert "under 5%" in explain_verdict(summary(1e-9, -0.01, verdict=Verdict.NO_MATERIAL_CHANGE))
+    assert "Holm-adjusted p" in explain_verdict(with_holm([summary(1e-9, -0.2), summary(1e-9, -0.2)])[0])
+    assert "fewer than two seeds" in explain_verdict(summary(math.nan, math.nan, verdict=Verdict.INSUFFICIENT_DATA))
+
+
+def test_compare_applies_containment_rules():
+    """Built-in end to end: the biased bearing's containment collapses, so fusion is over-confident."""
+    s = compare_modes(SCENARIOS["biased_bearing"], TrackerConfig(), range(3))
+    assert s.metrics[Mode.FUSION]["containment_95"].mean < 0.85
+    assert s.verdict is Verdict.OVER_CONFIDENT and s.rmse_p_adjusted is None

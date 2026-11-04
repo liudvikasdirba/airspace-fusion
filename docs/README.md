@@ -40,3 +40,4 @@ each version.
 | [ADR 0006: Single source for the package version](adr/0006-single-version-source.md) | accepted | `__version__` is the source; other files are checked against it |
 | [ADR 0007: NumPy tracker by default, Stone Soup as the cross-check](adr/0007-numpy-tracker-stone-soup-cross-check.md) | accepted | Filter maths in NumPy; Stone Soup must agree within 1e-9 |
 | [ADR 0008: Scenario files and scenario families](adr/0008-scenario-files-and-families.md) | accepted | TOML scenario files; families draw a world per seed from their own stream |
+| [ADR 0009: Verdict v2](adr/0009-verdict-v2.md) | accepted | Containment rules, "fusion over-confident", Holm correction, 200 seeds |

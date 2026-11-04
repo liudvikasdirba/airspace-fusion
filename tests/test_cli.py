@@ -73,9 +73,10 @@ def test_compare_single_scenario_with_first_seed(capsys):
     assert set(rows) == set(METRIC_NAMES)
     for (line,) in rows.values():
         assert len(re.findall(r"\S+ \+/- \S+", line)) == 2, line
-    verdicts = re.findall(r"^VERDICT: (.+)$", out, flags=re.MULTILINE)
-    assert len(verdicts) == 1 and verdicts[0] in {v.value for v in Verdict}
+    verdicts = re.findall(r"^VERDICT: (.+?) \((.+)\)$", out, flags=re.MULTILINE)
+    assert len(verdicts) == 1 and verdicts[0][0] in {v.value for v in Verdict}, verdicts  # verdict (reason)
     assert re.search(r"paired t-test p=", out)
+    assert "Holm" not in out  # a single comparison is not corrected
 
 
 def test_compare_output_same_with_parallel_workers(capsys):

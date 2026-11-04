@@ -1,7 +1,7 @@
 ---
 title: Roadmap to April 2027
 status: draft
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Roadmap to April 2027
@@ -14,12 +14,13 @@ commitment. Review it at every release and update the dates and the `updated` fi
 
 Finished deliverables and exit criteria are ticked below, with a note where the result differs from the plan.
 
-| Milestone | Status (1 November 2026) |
+| Milestone | Status (4 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
-| M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0** on 2 November. |
-| M3 – M8 | Not started. Two pieces landed early, on 2 November: the GOSPA metric (M3) and a display-only rolling NIS chart in the dashboard, the visible first step toward the M5 sensor health monitor. |
+| M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
+| M3 Honest scoring | **In progress** (started 4 November, two months ahead of its window). Done: GOSPA metric (2 November) and verdict v2 with ADR 0009 (4 November). Open: the learning-loop changes. |
+| M4 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
 
@@ -238,8 +239,10 @@ its held-out seeds.
 Deliverables:
 - GOSPA as an additional metric (single object; penalises missing tracks as well as error), so that coverage
   and error are judged together. *Added early, 2 November (cut-off 150 m); verdict v2 still to decide how to use it.*
-- Verdict v2:
+- [x] Verdict v2 (done 4 November; [ADR 0009](adr/0009-verdict-v2.md)). GOSPA stays out of the verdict while
+  coverage cannot differ between modes:
   - "fusion improves" also requires fusion's 95 % containment to be no more than 0.03 below the baseline's
+    (otherwise "fusion over-confident")
   - a new verdict, "fusion over-confident", when containment falls below 0.85 whatever the RMSE does
   - Holm correction when several scenarios or sweep points are compared at once
   - default seed count raised from 20 to 200
@@ -248,8 +251,9 @@ Deliverables:
   - a sealed test set, used once, to report the final result of a `learn` run
   - at least 50 seeds per training and held-out evaluation
   - acceptance by a paired test on held-out seeds as well as the 2 % margin
-- README results regenerated with the changes and the numbers that moved listed in the changelog.
-- ADR 0009: verdict v2 and learning evaluation.
+- [x] README results regenerated with the changes and the numbers that moved listed in the changelog
+  (verdict part, 4 November).
+- [x] ADR 0009: verdict v2. Learning evaluation gets its own ADR when the learning-loop changes land.
 
 Exit criteria: `biased_bearing` gets "fusion over-confident" or "fusion worsens", never "no material change";
 on the four built-in scenarios the other verdicts are unchanged; learning results reproduce on the sealed test set.

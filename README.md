@@ -86,12 +86,12 @@ One seeded simulation, both modes:
 .venv/Scripts/python -m airspace_fusion.cli run --scenario reference --seed 0
 ```
 
-Multi-seed comparison over all scenarios (about 6 s for 20 seeds, 30 s for 200, 100 s for 1000 on a 4-core laptop). Use `--scenario NAME` for
-one scenario or family, `--scenario families` for the five families, and `--first-seed N` to start from a different
-seed:
+Multi-seed comparison over all scenarios, 200 seeds by default (about 20–30 s on a 4-core laptop; `--seeds N`
+for another number). Use `--scenario NAME` for one scenario or family, `--scenario families` for the five
+families, and `--first-seed N` to start from a different seed:
 
 ```bash
-.venv/Scripts/python -m airspace_fusion.cli compare --seeds 20
+.venv/Scripts/python -m airspace_fusion.cli compare
 ```
 
 List every scenario and family, including those from scenario files, or print one as TOML to start your own file:
@@ -133,7 +133,7 @@ workers can help. Comparisons of fewer than 4 seeds always run serially.
 
 `learn` tunes the tracker settings per scenario and writes them to a **rule book** that later runs start from.
 Learning runs use their own seeds (training 1000–1005 and held-out 2000–2005 by default), so the
-[Results](#results-20-seeds-019-compare---seeds-20) seeds 0–19 remain an independent test.
+[Results](#results-200-seeds-0199-compare) seeds 0–199 remain an independent test.
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli learn --rounds 3
@@ -165,7 +165,7 @@ scored on the same seeds are not evaluated again.
 containment shortfall costs as much as 5 % RMSE, so a candidate cannot win by becoming over-confident.
 
 **Gaps** are containment more than 0.02 from 0.95, coverage below 0.95, more than one track initiation per run on
-average, and a "fusion worsens" verdict.
+average, and a harmful verdict ("fusion worsens" or "fusion over-confident").
 
 Every tried change becomes a **lesson**, whether accepted or rejected. The learning update applies the accepted
 lessons to the rule book, re-checked against fixed bounds (process noise 0.05–5, gate 0.99–0.9999, coast 4–20 s),
@@ -312,25 +312,37 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 Read RMSE together with coverage, or use GOSPA, which combines both. Trust the ellipses only when containment is near
 0.95.
 
-**Verdict.** Per-seed RMSEs are paired.
-- **"fusion improves"** or **"fusion worsens"**: the paired t-test gives p < 0.05 **and** the mean relative change is at least 5 %. If every seed changes by exactly the same amount, the change is treated as certain (p = 0).
-- **"no material change"**: any other case.
-- **"insufficient data"**: fewer than two seeds have an RMSE in both modes, for example when no track ever forms.
+**Verdict** ([ADR 0009](docs/adr/0009-verdict-v2.md)). Per-seed RMSEs are paired, and the rules apply in order:
+1. **"insufficient data"**: fewer than two seeds have an RMSE in both modes, for example when no track ever forms.
+2. **"fusion over-confident"**: fusion's mean 95 % containment is below 0.85, whatever RMSE does.
+3. **"fusion improves"** or **"fusion worsens"**: the paired t-test gives p < 0.05 **and** the mean relative change is at least 5 %. If every seed changes by exactly the same amount, the change is treated as certain (p = 0).
+4. An improvement counts only if fusion's containment is at most 0.03 below the baseline's; otherwise the verdict is **"fusion over-confident"** too.
+5. **"no material change"**: any other case.
 
-## Results (20 seeds, 0–19, `compare --seeds 20`)
+When one run compares several scenarios (`compare`) or sweep points (`sweep`), the p-values are Holm-corrected
+across them first. The CLI and the dashboard say which rule decided each verdict.
+
+## Results (200 seeds, 0–199, `compare`)
 
 | Scenario | Baseline RMSE (m) | Fusion RMSE (m) | Change [95 % CI] | Fusion 95 % containment | Verdict |
 |---|---|---|---|---|---|
-| reference | 18.83 ± 1.7 | 16.70 ± 1.6 | −2.13 m [−2.51, −1.76], −11.3 % | 0.92 | improves |
-| noisy_primary | 49.67 ± 5.3 | 37.83 ± 5.7 | −11.83 m [−13.54, −10.12], −23.8 % | 0.91 | improves |
-| distant_bearing | 18.83 ± 1.7 | 18.83 ± 1.7 | −0.00 m [−0.02, +0.02], −0.0 % | 0.92 | no material change |
-| biased_bearing | 18.83 ± 1.7 | 37.06 ± 4.0 | +18.23 m [+16.33, +20.13], +96.8 % | 0.28 | worsens |
+| reference | 18.70 ± 1.9 | 16.41 ± 1.6 | −2.30 m [−2.45, −2.14], −12.3 % | 0.93 | improves |
+| noisy_primary | 49.86 ± 24 | 37.57 ± 25 | −12.30 m [−12.92, −11.67], −24.7 % | 0.92 | improves |
+| distant_bearing | 18.70 ± 1.9 | 18.69 ± 1.9 | −0.01 m [−0.02, +0.01], −0.0 % | 0.93 | no material change |
+| biased_bearing | 18.70 ± 1.9 | 37.35 ± 4.4 | +18.65 m [+18.00, +19.29], +99.7 % | 0.28 | over-confident |
+
+Baseline containment is 0.93 in every scenario except `noisy_primary` (0.90). All p-values are below 1e-70 except
+`distant_bearing` (p = 0.27), before and after the Holm correction.
 
 Coverage is identical between modes in every scenario (0.96–0.99). GOSPA (baseline → fusion) tells the same story:
-21.08 → 19.21 m (`reference`), 52.98 → 42.69 m (`noisy_primary`), 21.08 → 21.08 m (`distant_bearing`) and
-21.08 → 38.13 m (`biased_bearing`). It is a few metres above RMSE because the scans before a track starts count.
+21.14 → 19.15 m (`reference`), 51.19 → 40.35 m (`noisy_primary`), 21.14 → 21.13 m (`distant_bearing`) and
+21.14 → 38.42 m (`biased_bearing`). It is a few metres above RMSE because the scans before a track starts count.
+In `noisy_primary` the RMSE spread across seeds (± 24 m) comes from a few seeds whose track drifts far from the
+truth; GOSPA caps each scan's error at 150 m, so its spread is ± 6 m.
 
-In `biased_bearing`, fusion also misses more primary updates (24.5 vs 19.45 per run): the bias drags the estimate far enough that correct position observations fail the gate. A bias sweep (`tests/test_statistics.py`) shows the damage is not monotonic. Fusion error grows up to about 2° of bias, then falls at 3°, because the gate rejects most grossly biased bearings. A moderate bias does the most harm.
+In `biased_bearing`, fusion also misses more primary updates (24.7 vs 20.2 per run): the bias drags the estimate far enough that correct position observations fail the gate. A bias sweep (`tests/test_statistics.py`) shows the damage is not monotonic. Fusion error grows up to about 2° of bias, then falls at 3°, because the gate rejects most grossly biased bearings. A moderate bias does the most harm. With 50 seeds, the verdict is "fusion over-confident" from 0.5° of bias,
+where RMSE has changed by only +2 % but containment has fallen to 0.85, up to 2°; at 3° containment recovers
+to 0.89 and the verdict is "fusion worsens".
 
 **Filter consistency.** With a motion model matched to the simulator (no turn, matched process noise), 40 Monte Carlo runs give:
 - average NEES ≈ 4 (the state dimension)
@@ -369,7 +381,7 @@ sensor, is identical at every angle.
 | 75° | 18.67 m | 16.44 m | −12.0 % [−2.44, −2.02] m | 21.07 → 19.13 m | 0.93 |
 | 90° | 18.67 m | 16.44 m | −12.0 % [−2.44, −2.02] m | 21.07 → 19.13 m | 0.93 |
 
-Fusion improves at every angle (p < 1e-30 everywhere), and the gain is **nearly flat**: it falls slightly from
+Fusion improves at every angle (Holm-adjusted p < 1e-30 everywhere), and the gain is **nearly flat**: it falls slightly from
 14.6 % at 5° to 12.0 % from about 75° on.
 
 The roadmap had expected the gain to *rise* with the angle. That intuition holds when the main sensor's error
@@ -395,7 +407,7 @@ Reproduce it (writes a CSV and a results file that `reproduce` can check):
 - Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
 - Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.
 - RMSE is evaluated only where a track exists; GOSPA covers every scan, but its cut-off (150 m) is a choice.
-- Process noise and gate settings are shared by both modes. The [Results](#results-20-seeds-019-compare---seeds-20) use the untuned defaults; `learn` can tune them per scenario (see [Learning loop](#learning-loop)).
+- Process noise and gate settings are shared by both modes. The [Results](#results-200-seeds-0199-compare) use the untuned defaults; `learn` can tune them per scenario (see [Learning loop](#learning-loop)).
 
 ## Development and testing
 

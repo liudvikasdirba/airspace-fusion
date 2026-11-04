@@ -114,13 +114,17 @@ def test_large_bias_is_increasingly_gated_out(bias_sweep):
     assert by_bias[0.0] < 0.02 and by_bias[3.0] > 0.5, by_bias
 
 
-def test_verdict_flips_from_improves_to_worsens(bias_sweep):
-    """M6c: verdict improves at small bias, worsens at moderate bias (calibration flip between 0.25 and 1 deg)."""
+def test_verdict_flips_from_improves_to_harmful(bias_sweep):
+    """M6c: verdict improves at small bias, harmful at moderate bias (calibration flip between 0.25 and 1 deg).
+
+    With verdict v2 (ADR 0009) a moderate bias is "fusion over-confident": containment collapses before RMSE
+    is judged.
+    """
     verdicts = {bias: s.verdict for bias, s, _ in bias_sweep}
     assert verdicts[0.0] is Verdict.IMPROVES and verdicts[0.25] is Verdict.IMPROVES
-    assert all(verdicts[b] is Verdict.WORSENS for b in (1.0, 1.5, 2.0)), verdicts
-    first_worse = min(b for b, v in verdicts.items() if v is Verdict.WORSENS)
-    assert 0.25 < first_worse <= 1.0
+    assert all(verdicts[b].harmful for b in (1.0, 1.5, 2.0)), verdicts
+    first_harmful = min(b for b, v in verdicts.items() if v.harmful)
+    assert 0.25 < first_harmful <= 1.0
 
 
 @pytest.mark.parametrize("rate", [0.2, 1.0, 5.0])
@@ -169,3 +173,22 @@ def test_fusion_gain_across_crossing_angles():
         assert point.summary.verdict is Verdict.IMPROVES, (point.value, point.summary.rmse_relative_change)
     gains = [-p.summary.rmse_relative_change for p in points]
     assert max(gains) - min(gains) < 0.06, gains  # within a few percentage points across the whole range
+
+
+def test_m3_exit_criteria_on_builtin_scenarios():
+    """M3 exit: Holm-corrected verdict v2 over the four built-in scenarios (calibration: 200 seeds).
+
+    biased_bearing is "fusion over-confident" (never "no material change"); the other three keep their v1
+    verdicts.
+    """
+    from airspace_fusion.evaluation import compare_modes, with_holm
+
+    names = ["reference", "noisy_primary", "distant_bearing", "biased_bearing"]
+    summaries = with_holm([compare_modes(SCENARIOS[n], TrackerConfig(), range(40)) for n in names])
+    verdicts = {n: s.verdict for n, s in zip(names, summaries)}
+    assert verdicts == {
+        "reference": Verdict.IMPROVES,
+        "noisy_primary": Verdict.IMPROVES,
+        "distant_bearing": Verdict.NO_MATERIAL_CHANGE,
+        "biased_bearing": Verdict.OVER_CONFIDENT,
+    }, verdicts

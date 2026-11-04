@@ -7,6 +7,11 @@ version and the command line. ``config_hash`` is a SHA-256 over what determines 
 sweep points, tracker, seeds), so two records with the same hash must agree. ``reproduce`` re-runs a record and
 lists every metric that differs.
 
+Format 2 (verdict v2, ADR 0009) adds each entry's Holm-adjusted p-value and, at record level,
+``multiple_comparisons``: the raw p-values of every comparison in the command run and the positions of this
+record's entries among them. A ``compare`` with a rule book can split one run over several records, so the
+whole family is stored and ``reproduce`` can redo the correction exactly.
+
 Wall-clock ``processing_time_s`` is recorded but never compared.
 """
 
@@ -19,17 +24,17 @@ import platform
 import subprocess
 from collections.abc import Sequence
 from concurrent.futures import Executor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from airspace_fusion import __version__
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
-from airspace_fusion.evaluation import ComparisonSummary, compare_modes
+from airspace_fusion.evaluation import ComparisonSummary, compare_modes, holm_adjust, summary_verdict
 from airspace_fusion.scenarios import ScenarioFamily, ScenarioSource
 
-RESULTS_FORMAT = 1
+RESULTS_FORMAT = 2
 NON_DETERMINISTIC = ("processing_time_s",)
 TOLERANCE = 1e-9
 
@@ -60,6 +65,7 @@ def summary_to_dict(summary: ComparisonSummary) -> dict[str, Any]:
         "rmse_delta_ci95_m": [_finite_or_none(v) for v in summary.rmse_delta_ci95_m],
         "rmse_relative_change": _finite_or_none(summary.rmse_relative_change),
         "rmse_p_value": _finite_or_none(summary.rmse_p_value),
+        "rmse_p_adjusted": None if summary.rmse_p_adjusted is None else _finite_or_none(summary.rmse_p_adjusted),
         "verdict": summary.verdict.value,
     }
 
@@ -96,8 +102,21 @@ def config_hash(record: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(determining, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class ComparisonFamily:
+    """The Holm family a record's entries belong to: every raw p-value of the command run, in run order."""
+
+    p_values: list[float]
+    positions: list[int]  # where this record's entries sit in ``p_values``
+
+
 def build_record(
-    command: str, entries: Sequence[ResultEntry], tracker: TrackerConfig, seeds: Sequence[int], argv: Sequence[str]
+    command: str,
+    entries: Sequence[ResultEntry],
+    tracker: TrackerConfig,
+    seeds: Sequence[int],
+    argv: Sequence[str],
+    family: ComparisonFamily | None = None,
 ) -> dict[str, Any]:
     commit = _git("rev-parse", "HEAD")
     record: dict[str, Any] = {
@@ -115,6 +134,11 @@ def build_record(
             {"source": source_to_dict(e.source), "point": e.point, "summary": summary_to_dict(e.summary)}
             for e in entries
         ],
+        "multiple_comparisons": None if family is None else {
+            "method": "holm",
+            "p_values": [_finite_or_none(p) for p in family.p_values],
+            "positions": list(family.positions),
+        },
     }
     record["config_hash"] = config_hash(record)
     return record
@@ -172,8 +196,19 @@ def reproduce(record: dict[str, Any], executor: Executor | None = None) -> list[
     """Re-run every entry of a record; returns the metrics that differ (empty when it reproduces)."""
     tracker = TrackerConfig.model_validate(record["tracker"])
     seeds = record["seeds"]
+    summaries = [compare_modes(source_from_dict(e["source"]), tracker, seeds, executor) for e in record["entries"]]
+    family = record["multiple_comparisons"]
+    if family is not None:
+        # Redo the Holm correction with this record's re-run p-values in their places in the recorded family.
+        p_values = [math.nan if p is None else p for p in family["p_values"]]
+        for position, summary in zip(family["positions"], summaries):
+            p_values[position] = summary.rmse_p_value
+        adjusted = holm_adjust(p_values)
+        summaries = [
+            replace(s, rmse_p_adjusted=adjusted[pos], verdict=summary_verdict(s, adjusted[pos]))
+            for pos, s in zip(family["positions"], summaries)
+        ]
     found = []
-    for index, entry in enumerate(record["entries"]):
-        summary = compare_modes(source_from_dict(entry["source"]), tracker, seeds, executor)
+    for index, (entry, summary) in enumerate(zip(record["entries"], summaries)):
         found += _differences(entry["summary"], summary_to_dict(summary), f"entries[{index}]")
     return found

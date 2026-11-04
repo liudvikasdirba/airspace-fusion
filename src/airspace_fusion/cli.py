@@ -6,7 +6,6 @@ import argparse
 import csv
 import os
 import sys
-from concurrent.futures import Executor
 from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime, timezone
 from functools import partial
@@ -17,18 +16,29 @@ from airspace_fusion import __version__
 from airspace_fusion.agents import LearningTask, Orchestrator, Skills, describe_tracker
 from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
 from airspace_fusion.evaluation import (
+    DEFAULT_SEEDS,
     METRIC_NAMES,
     MIN_PARALLEL_SEEDS,
     ComparisonSummary,
     Mode,
     SweepPoint,
     compare_modes,
+    explain_verdict,
     run_single,
     seed_executor,
     sweep,
+    with_holm,
 )
 from airspace_fusion.learning import RuleBook, RuleBookError, RunLog
-from airspace_fusion.results import ResultEntry, ResultsFileError, build_record, load_record, reproduce, save_record
+from airspace_fusion.results import (
+    ComparisonFamily,
+    ResultEntry,
+    ResultsFileError,
+    build_record,
+    load_record,
+    reproduce,
+    save_record,
+)
 from airspace_fusion.scenarios import (
     FAMILIES,
     SWEEPABLE_PARAMETERS,
@@ -128,11 +138,16 @@ def _results_dir(args: argparse.Namespace) -> Path:
 
 
 def _save_results(
-    args: argparse.Namespace, command: str, entries: list[ResultEntry], tracker: TrackerConfig, seeds: list[int]
+    args: argparse.Namespace,
+    command: str,
+    entries: list[ResultEntry],
+    tracker: TrackerConfig,
+    seeds: list[int],
+    family: ComparisonFamily | None = None,
 ) -> None:
     if args.no_results:
         return
-    path = save_record(build_record(command, entries, tracker, seeds, args.argv), _results_dir(args))
+    path = save_record(build_record(command, entries, tracker, seeds, args.argv, family), _results_dir(args))
     print(f"results saved to {path} (check with: airspace-fusion reproduce {path})")
 
 
@@ -142,23 +157,30 @@ def _compare(args: argparse.Namespace) -> None:
     # An explicitly named rule book must exist: silently falling back to defaults would mislabel the results.
     rules = _load_rules(args, must_exist=True) if args.rules else None
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
-    # A results record holds one tracker; a rule book with per-scenario settings gives one record per setting.
-    by_tracker: dict[TrackerConfig, list[ResultEntry]] = {}
+    runs: list[tuple[ScenarioSource, TrackerConfig, ComparisonSummary]] = []
     with seed_executor(args.workers, len(seeds)) as executor:
         for source in sources:
             tracker = rules.tracker_for(source.name) if rules else TrackerConfig()
-            summary = _print_comparison(source, tracker, seeds, rules, executor)
-            by_tracker.setdefault(tracker, []).append(ResultEntry(source, summary))
-    for tracker, entries in by_tracker.items():
-        _save_results(args, "compare", entries, tracker, seeds)
+            runs.append((source, tracker, compare_modes(source, tracker, seeds, executor)))
+    # Every comparison of the run is one family of tests (ADR 0009).
+    summaries = with_holm([summary for _, _, summary in runs])
+    if len(summaries) > 1:
+        print(f"verdicts are Holm-corrected across the {len(summaries)} comparisons of this run\n")
+    # A results record holds one tracker; a rule book with per-scenario settings gives one record per setting.
+    by_tracker: dict[TrackerConfig, list[tuple[int, ResultEntry]]] = {}
+    for index, ((source, tracker, _), summary) in enumerate(zip(runs, summaries)):
+        _print_comparison(source, tracker, summary, rules)
+        by_tracker.setdefault(tracker, []).append((index, ResultEntry(source, summary)))
+    raw = [summary.rmse_p_value for summary in summaries]
+    for tracker, items in by_tracker.items():
+        family = ComparisonFamily(raw, [i for i, _ in items]) if len(summaries) > 1 else None
+        _save_results(args, "compare", [entry for _, entry in items], tracker, seeds, family)
 
 
 def _print_comparison(
-    source: ScenarioSource, tracker: TrackerConfig, seeds: list[int], rules: RuleBook | None,
-    executor: Executor | None,
-) -> ComparisonSummary:
+    source: ScenarioSource, tracker: TrackerConfig, s: ComparisonSummary, rules: RuleBook | None
+) -> None:
     name = source.name
-    s = compare_modes(source, tracker, seeds, executor)
     kind = " (family: a different world for each seed)" if isinstance(source, ScenarioFamily) else ""
     print(f"== {name}{kind}: {source.description}")
     if rules:
@@ -170,9 +192,9 @@ def _print_comparison(
         print(f"{metric:<24}" + "".join(f"{f'{c.mean:.4g} +/- {c.std:.2g}':>22}" for c in cells))
     print(f"RMSE delta (fusion - baseline): {s.rmse_delta_mean_m:+.2f} m "
           f"[95% CI {s.rmse_delta_ci95_m[0]:+.2f}, {s.rmse_delta_ci95_m[1]:+.2f}], "
-          f"relative {s.rmse_relative_change:+.1%}, paired t-test p={s.rmse_p_value:.3g}")
-    print(f"VERDICT: {s.verdict.value}\n")
-    return s
+          f"relative {s.rmse_relative_change:+.1%}, paired t-test p={s.rmse_p_value:.3g}"
+          + ("" if s.rmse_p_adjusted is None else f", Holm-adjusted p={s.rmse_p_adjusted:.3g}"))
+    print(f"VERDICT: {s.verdict.value} ({explain_verdict(s)})\n")
 
 
 def _sweep_values(text: str) -> list[float]:
@@ -197,7 +219,7 @@ def _sweep_values(text: str) -> list[float]:
 SWEEP_CSV_COLUMNS = (
     "family", "parameter", "value", "seeds", "baseline_rmse_m", "baseline_rmse_std", "fusion_rmse_m",
     "fusion_rmse_std", "rmse_delta_m", "rmse_delta_ci95_low", "rmse_delta_ci95_high", "rmse_relative_change",
-    "p_value", "verdict", "baseline_gospa_m", "fusion_gospa_m", "baseline_coverage", "fusion_coverage",
+    "p_value", "p_adjusted", "verdict", "baseline_gospa_m", "fusion_gospa_m", "baseline_coverage", "fusion_coverage",
     "baseline_containment_95", "fusion_containment_95",
 )
 
@@ -211,12 +233,16 @@ def _sweep_row(family: str, parameter: str, point: SweepPoint) -> dict[str, obje
         "fusion_rmse_m": fused["position_rmse_m"].mean, "fusion_rmse_std": fused["position_rmse_m"].std,
         "rmse_delta_m": s.rmse_delta_mean_m, "rmse_delta_ci95_low": s.rmse_delta_ci95_m[0],
         "rmse_delta_ci95_high": s.rmse_delta_ci95_m[1], "rmse_relative_change": s.rmse_relative_change,
-        "p_value": s.rmse_p_value, "verdict": s.verdict.value,
+        "p_value": s.rmse_p_value, "p_adjusted": s.rmse_p_adjusted, "verdict": s.verdict.value,
         "baseline_gospa_m": base["gospa_m"].mean, "fusion_gospa_m": fused["gospa_m"].mean,
         "baseline_coverage": base["coverage"].mean, "fusion_coverage": fused["coverage"].mean,
         "baseline_containment_95": base["containment_95"].mean,
         "fusion_containment_95": fused["containment_95"].mean,
     }
+
+
+def _holm_p(s: ComparisonSummary) -> float:
+    return s.rmse_p_value if s.rmse_p_adjusted is None else s.rmse_p_adjusted
 
 
 def _sweep(args: argparse.Namespace) -> None:
@@ -235,14 +261,14 @@ def _sweep(args: argparse.Namespace) -> None:
     with seed_executor(args.workers, len(seeds)) as executor:
         points = sweep(source, args.parameter, args.values, tracker, seeds, executor)
     print(f"{args.parameter:>22}  {'baseline RMSE':>14}  {'fusion RMSE':>12}  {'change [95% CI]':>28}  "
-          f"{'p':>8}  {'fusion cont.':>12}  verdict")
+          f"{'Holm p':>8}  {'fusion cont.':>12}  verdict")
     for point in points:
         s = point.summary
         base, fused = s.metrics[Mode.BASELINE], s.metrics[Mode.FUSION]
         low, high = s.rmse_delta_ci95_m
         change = f"{s.rmse_relative_change:+.1%} [{low:+.2f}, {high:+.2f}] m"
         print(f"{point.value:>22.4g}  {base['position_rmse_m'].mean:>12.2f} m  {fused['position_rmse_m'].mean:>10.2f} m"
-              f"  {change:>28}  {s.rmse_p_value:>8.2g}  {fused['containment_95'].mean:>12.2f}  {s.verdict.value}")
+              f"  {change:>28}  {_holm_p(s):>8.2g}  {fused['containment_95'].mean:>12.2f}  {s.verdict.value}")
     if args.csv:
         args.csv.parent.mkdir(parents=True, exist_ok=True)
         with args.csv.open("w", newline="", encoding="utf-8") as f:
@@ -251,7 +277,8 @@ def _sweep(args: argparse.Namespace) -> None:
             writer.writerows(_sweep_row(source.name, args.parameter, point) for point in points)
         print(f"\nCSV written to {args.csv}")
     entries = [ResultEntry(p.family, p.summary, {args.parameter: p.value}) for p in points]
-    _save_results(args, "sweep", entries, tracker, seeds)
+    family = ComparisonFamily([p.summary.rmse_p_value for p in points], list(range(len(points))))
+    _save_results(args, "sweep", entries, tracker, seeds, family if len(points) > 1 else None)
 
 
 def _reproduce(args: argparse.Namespace) -> int:
@@ -340,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cmp_p = sub.add_parser("compare", help="multi-seed baseline vs fusion comparison")
     cmp_p.add_argument("--scenario", default="all", help=SCENARIO_HELP)
-    cmp_p.add_argument("--seeds", type=_positive_int, default=20)
+    cmp_p.add_argument("--seeds", type=_positive_int, default=DEFAULT_SEEDS)
     cmp_p.add_argument("--first-seed", type=int, default=0)
     cmp_p.add_argument("--rules", type=Path, help="use the tracker settings from a learned rule book")
     cmp_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
@@ -364,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     swp_p.add_argument("--parameter", required=True, choices=SWEEPABLE_PARAMETERS)
     swp_p.add_argument("--values", required=True, type=_sweep_values,
                        help="comma-separated values, or lo:hi:n for n evenly spaced values (e.g. 5:90:6)")
-    swp_p.add_argument("--seeds", type=_positive_int, default=20)
+    swp_p.add_argument("--seeds", type=_positive_int, default=DEFAULT_SEEDS)
     swp_p.add_argument("--first-seed", type=int, default=0)
     swp_p.add_argument("--csv", type=Path, metavar="PATH", help="also write the table as CSV")
     swp_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
