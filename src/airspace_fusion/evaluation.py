@@ -12,7 +12,7 @@ import sys
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import repeat
 
@@ -33,6 +33,11 @@ GOSPA_CUTOFF_M = 150.0
 # Relative RMSE change below which a difference is not considered material.
 MATERIAL_RELATIVE_CHANGE = 0.05
 SIGNIFICANCE_LEVEL = 0.05
+# Verdict v2 (ADR 0009). Below this mean 95 % containment fusion is over-confident, whatever its RMSE does.
+OVER_CONFIDENT_CONTAINMENT = 0.85
+# An RMSE improvement counts only if fusion's containment is at most this much below the baseline's.
+MAX_CONTAINMENT_DROP = 0.03
+DEFAULT_SEEDS = 200
 # Below this many seeds per comparison, starting worker processes costs more than it saves.
 MIN_PARALLEL_SEEDS = 4
 # Seeds per comparison are sent to workers in about this many batches: few enough that the scenario and
@@ -153,8 +158,14 @@ def run_single(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> S
 class Verdict(str, Enum):
     IMPROVES = "fusion improves"
     WORSENS = "fusion worsens"
+    OVER_CONFIDENT = "fusion over-confident"
     NO_MATERIAL_CHANGE = "no material change"
     INSUFFICIENT_DATA = "insufficient data"
+
+    @property
+    def harmful(self) -> bool:
+        """Fusion should not be used: it is less accurate, or it misstates its own uncertainty."""
+        return self in (Verdict.WORSENS, Verdict.OVER_CONFIDENT)
 
 
 @dataclass(frozen=True)
@@ -181,6 +192,9 @@ class ComparisonSummary:
     rmse_relative_change: float
     rmse_p_value: float
     verdict: Verdict
+    # Holm-adjusted p-value when this comparison was one of several in a command run; None for a single one.
+    # The verdict uses it in place of ``rmse_p_value``.
+    rmse_p_adjusted: float | None = None
 
 
 def paired_verdict(
@@ -207,11 +221,87 @@ def paired_verdict(
         sem = float(d.std(ddof=1)) / math.sqrt(d.size)
         half = float(stats.t.ppf(0.975, d.size - 1)) * sem
         p_value = float(stats.ttest_rel(f, b).pvalue)
-    if p_value < SIGNIFICANCE_LEVEL and abs(rel) >= MATERIAL_RELATIVE_CHANGE:
-        verdict = Verdict.IMPROVES if mean_d < 0 else Verdict.WORSENS
-    else:
-        verdict = Verdict.NO_MATERIAL_CHANGE
-    return mean_d, (mean_d - half, mean_d + half), rel, p_value, verdict
+    return mean_d, (mean_d - half, mean_d + half), rel, p_value, rmse_verdict(mean_d, rel, p_value)
+
+
+def rmse_verdict(mean_delta: float, relative_change: float, p_value: float) -> Verdict:
+    """Verdict from the paired RMSE test alone: significant (p < 0.05) and material (at least 5 %)."""
+    if p_value < SIGNIFICANCE_LEVEL and abs(relative_change) >= MATERIAL_RELATIVE_CHANGE:
+        return Verdict.IMPROVES if mean_delta < 0 else Verdict.WORSENS
+    return Verdict.NO_MATERIAL_CHANGE
+
+
+def verdict_v2(rmse: Verdict, baseline_containment: float, fusion_containment: float) -> Verdict:
+    """Add the containment rules of ADR 0009 to the RMSE verdict.
+
+    Fusion is over-confident when its mean 95 % containment is below 0.85, or when it improves RMSE but its
+    containment falls more than 0.03 below the baseline's: the accuracy gain then comes with an uncertainty
+    the filter understates. Without a containment value for both modes the RMSE verdict stands.
+    """
+    if rmse is Verdict.INSUFFICIENT_DATA or math.isnan(baseline_containment) or math.isnan(fusion_containment):
+        return rmse
+    if fusion_containment < OVER_CONFIDENT_CONTAINMENT:
+        return Verdict.OVER_CONFIDENT
+    if rmse is Verdict.IMPROVES and fusion_containment < baseline_containment - MAX_CONTAINMENT_DROP:
+        return Verdict.OVER_CONFIDENT
+    return rmse
+
+
+def summary_verdict(summary: ComparisonSummary, p_value: float) -> Verdict:
+    """Verdict v2 of ``summary`` with ``p_value`` as the RMSE test's p-value."""
+    if summary.verdict is Verdict.INSUFFICIENT_DATA:
+        return summary.verdict
+    rmse = rmse_verdict(summary.rmse_delta_mean_m, summary.rmse_relative_change, p_value)
+    containment = {mode: summary.metrics[mode]["containment_95"].mean for mode in Mode}
+    return verdict_v2(rmse, containment[Mode.BASELINE], containment[Mode.FUSION])
+
+
+def explain_verdict(summary: ComparisonSummary) -> str:
+    """Why ``summary`` got its verdict, in one sentence."""
+    p = summary.rmse_p_value if summary.rmse_p_adjusted is None else summary.rmse_p_adjusted
+    p_text = "p" if summary.rmse_p_adjusted is None else "Holm-adjusted p"
+    containment = {mode: summary.metrics[mode]["containment_95"].mean for mode in Mode}
+    if summary.verdict is Verdict.INSUFFICIENT_DATA:
+        return "fewer than two seeds have an RMSE in both modes"
+    if summary.verdict is Verdict.OVER_CONFIDENT:
+        if containment[Mode.FUSION] < OVER_CONFIDENT_CONTAINMENT:
+            return (f"fusion's 95 % containment is {containment[Mode.FUSION]:.2f}, "
+                    f"below {OVER_CONFIDENT_CONTAINMENT:.2f}")
+        return (f"RMSE improves ({p_text} = {p:.3g}), but fusion's 95 % containment "
+                f"({containment[Mode.FUSION]:.2f}) is more than {MAX_CONTAINMENT_DROP:.2f} "
+                f"below the baseline's ({containment[Mode.BASELINE]:.2f})")
+    material = abs(summary.rmse_relative_change) >= MATERIAL_RELATIVE_CHANGE
+    significant = p < SIGNIFICANCE_LEVEL
+    if summary.verdict is Verdict.NO_MATERIAL_CHANGE:
+        reasons = ([] if significant else [f"{p_text} = {p:.3g} is not below {SIGNIFICANCE_LEVEL}"]) + (
+            [] if material else [f"the change ({summary.rmse_relative_change:+.1%}) is under "
+                                 f"{MATERIAL_RELATIVE_CHANGE:.0%}"])
+        return " and ".join(reasons)
+    return (f"RMSE {summary.rmse_relative_change:+.1%} with {p_text} = {p:.3g}; fusion's 95 % containment "
+            f"{containment[Mode.FUSION]:.2f} (baseline {containment[Mode.BASELINE]:.2f})")
+
+
+def holm_adjust(p_values: Sequence[float]) -> list[float]:
+    """Holm-Bonferroni adjusted p-values, in the input order. NaN stays NaN and does not count as a test."""
+    tested = sorted((p, i) for i, p in enumerate(p_values) if not math.isnan(p))
+    adjusted = [math.nan] * len(p_values)
+    running = 0.0
+    for rank, (p, i) in enumerate(tested):
+        running = max(running, min(1.0, (len(tested) - rank) * p))  # step-down: never below an earlier one
+        adjusted[i] = running
+    return adjusted
+
+
+def with_holm(summaries: Sequence[ComparisonSummary]) -> list[ComparisonSummary]:
+    """Correct the RMSE tests of several comparisons from one command run for multiple testing.
+
+    Each summary gets its Holm-adjusted p-value and the verdict that follows from it. A single comparison
+    is returned unchanged.
+    """
+    if len(summaries) < 2:
+        return list(summaries)
+    adjusted = holm_adjust([s.rmse_p_value for s in summaries])
+    return [replace(s, rmse_p_adjusted=p, verdict=summary_verdict(s, p)) for s, p in zip(summaries, adjusted)]
 
 
 METRIC_NAMES = (
@@ -281,10 +371,12 @@ def compare_modes(
         mode: {name: summarise([float(getattr(m, name)) for m in runs]) for name in METRIC_NAMES}
         for mode, runs in per_mode.items()
     }
-    delta, ci, rel, p, verdict = paired_verdict(
+    delta, ci, rel, p, rmse = paired_verdict(
         [m.position_rmse_m for m in per_mode[Mode.BASELINE]],
         [m.position_rmse_m for m in per_mode[Mode.FUSION]],
     )
+    containment = {mode: metrics[mode]["containment_95"].mean for mode in Mode}
+    verdict = verdict_v2(rmse, containment[Mode.BASELINE], containment[Mode.FUSION])
     return ComparisonSummary(scenario.name, seeds, metrics, delta, ci, rel, p, verdict)
 
 
@@ -306,7 +398,8 @@ def sweep(
     """Paired comparison at each value of one family parameter, over the same seeds.
 
     The family draws every other parameter of a seed identically at every point (common random numbers), so
-    differences between points come from the swept parameter, not from different worlds.
+    differences between points come from the swept parameter, not from different worlds. Verdicts are
+    Holm-corrected across the points (ADR 0009).
     """
     if not values:
         raise ValueError("a sweep needs at least one value")
@@ -316,4 +409,5 @@ def sweep(
             raise ValueError(f"sweep values must be finite, got {value}")
         fixed = family.with_fixed(parameter, value)
         points.append(SweepPoint(value, fixed, compare_modes(fixed, tracker, seeds, executor)))
-    return points
+    corrected = with_holm([point.summary for point in points])  # the points are one family of tests
+    return [replace(point, summary=summary) for point, summary in zip(points, corrected)]

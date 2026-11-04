@@ -10,9 +10,10 @@ import pytest
 
 from airspace_fusion.cli import SWEEP_CSV_COLUMNS, main
 from airspace_fusion.config import SCENARIOS, TrackerConfig
-from airspace_fusion.evaluation import Mode, Verdict, compare_modes, sweep
+from airspace_fusion.evaluation import Mode, Verdict, compare_modes, holm_adjust, sweep, with_holm
 from airspace_fusion.results import (
     RESULTS_FORMAT,
+    ComparisonFamily,
     ResultEntry,
     ResultsFileError,
     build_record,
@@ -190,3 +191,36 @@ def test_cli_sweep_and_reproduce_usage_errors(args, message, capsys):
         main(args)
     assert exc.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_sweep_points_are_holm_corrected():
+    points = sweep(CROSSING, "crossing_angle_deg", [10.0, 80.0], TrackerConfig(), SEEDS)
+    raw = [p.summary.rmse_p_value for p in points]
+    assert [p.summary.rmse_p_adjusted for p in points] == pytest.approx(holm_adjust(raw))
+    assert all(p.summary.rmse_p_adjusted >= p.summary.rmse_p_value for p in points)
+
+
+def test_reproduce_redoes_holm_across_records(tmp_path):
+    """A compare run split over two records (as a rule book does) keeps the whole family, and reproduces."""
+    sources = [SCENARIOS["reference"], SCENARIOS["distant_bearing"], SCENARIOS["noisy_primary"]]
+    tracker = TrackerConfig()
+    summaries = with_holm([compare_modes(s, tracker, SEEDS) for s in sources])
+    raw = [s.rmse_p_value for s in summaries]
+    records = [
+        build_record("compare", [ResultEntry(sources[i], summaries[i]) for i in positions], tracker, SEEDS,
+                     ["compare"], ComparisonFamily(raw, positions))
+        for positions in ([0, 2], [1])
+    ]
+    for record in records:
+        assert record["multiple_comparisons"]["positions"] in ([0, 2], [1])
+        assert reproduce(load_record(save_record(record, tmp_path))) == []
+    # The other record's p-values take part in the correction: change one and this record's adjusted p moves.
+    edited = json.loads(json.dumps(records[1]))
+    edited["multiple_comparisons"]["p_values"][0] = 0.5
+    assert any("rmse_p_adjusted" in d for d in reproduce(edited))
+
+
+def test_single_comparison_records_have_no_family():
+    record = record_for()
+    assert record["multiple_comparisons"] is None
+    assert record["entries"][0]["summary"]["rmse_p_adjusted"] is None

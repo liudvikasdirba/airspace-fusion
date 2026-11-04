@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from airspace_fusion import __version__
 from airspace_fusion.config import TrackerConfig
-from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict
+from airspace_fusion.evaluation import ComparisonSummary, Mode
 
 # Version of the rule book's JSON layout. Increase it on any incompatible change, so that an
 # old file fails to load with a clear error instead of being misread.
@@ -115,7 +115,7 @@ def find_gaps(summary: ComparisonSummary, modes: Sequence[Mode]) -> list[Gap]:
             gaps.append(Gap(GapKind.LOW_COVERAGE, summary.scenario, mode, m["coverage"].mean, MIN_COVERAGE))
         if m["track_initiations"].mean > MAX_TRACK_INITIATIONS:
             gaps.append(Gap(GapKind.TRACK_RESTARTS, summary.scenario, mode, m["track_initiations"].mean, 1.0))
-    if Mode.FUSION in modes and summary.verdict is Verdict.WORSENS:
+    if Mode.FUSION in modes and summary.verdict.harmful:
         gaps.append(Gap(GapKind.FUSION_HARMFUL, summary.scenario, Mode.FUSION, summary.rmse_relative_change, 0.0))
     return gaps
 

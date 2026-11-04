@@ -27,7 +27,7 @@ from pathlib import Path
 
 from airspace_fusion import __version__
 from airspace_fusion.config import TrackerConfig
-from airspace_fusion.evaluation import ComparisonSummary, Mode, Verdict, compare_modes
+from airspace_fusion.evaluation import ComparisonSummary, Mode, compare_modes
 from airspace_fusion.learning import (
     MAX_COVERAGE_LOSS,
     MIN_SCORE_IMPROVEMENT,
@@ -184,7 +184,7 @@ class QAAgent:
         if not any(g.kind is GapKind.FUSION_HARMFUL for g in work.gaps):
             return
         holdout = self._holdout_incumbent(work, ctx)
-        confirmed = holdout.verdict is Verdict.WORSENS
+        confirmed = holdout.verdict.harmful
         lesson = Lesson(
             run_id=ctx.log.run_id,
             scenario=work.name,

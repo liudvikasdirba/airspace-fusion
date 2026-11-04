@@ -265,8 +265,9 @@ def test_next_run_starts_from_learned_rules():
     assert evaluator.calls[0] == ("reference", learned_q, (1, 2))
 
 
-def test_harmful_fusion_is_disabled_after_holdout_confirmation():
-    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=FakeEvaluator(Verdict.WORSENS))).run(task())
+@pytest.mark.parametrize("verdict", [Verdict.WORSENS, Verdict.OVER_CONFIDENT])
+def test_harmful_fusion_is_disabled_after_holdout_confirmation(verdict):
+    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=FakeEvaluator(verdict))).run(task())
     assert not outcome.rules.fusion_enabled("reference")
     (fusion_lesson,) = [x for x in outcome.lessons if x.action is LessonAction.DISABLE_FUSION]
     assert fusion_lesson.accepted and fusion_lesson.triggers == (GapKind.FUSION_HARMFUL,)

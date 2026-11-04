@@ -12,7 +12,15 @@ from plotly.subplots import make_subplots
 
 from airspace_fusion.config import DEFAULT_SCENARIO, TrackerConfig
 from airspace_fusion.estimation import NIS_WINDOW, Estimate, nis_series
-from airspace_fusion.evaluation import CHI2_2DOF_95, METRIC_NAMES, Mode, SingleRun, compare_modes, run_single
+from airspace_fusion.evaluation import (
+    CHI2_2DOF_95,
+    METRIC_NAMES,
+    Mode,
+    SingleRun,
+    compare_modes,
+    explain_verdict,
+    run_single,
+)
 from airspace_fusion.scenarios import ScenarioFamily, builtin_sources, with_overrides
 from airspace_fusion.schemas import MeasurementType
 
@@ -292,9 +300,11 @@ def main() -> None:
         st.markdown(
             f"**Verdict: {s.verdict.value}.** Paired RMSE change (fusion - baseline) "
             f"{s.rmse_delta_mean_m:+.2f} m (95% CI {s.rmse_delta_ci95_m[0]:+.2f} to {s.rmse_delta_ci95_m[1]:+.2f}), "
-            f"{s.rmse_relative_change:+.1%}, paired t-test p = {s.rmse_p_value:.3g}. "
-            "A change counts as material only if p < 0.05 and |relative change| >= 5%."
+            f"{s.rmse_relative_change:+.1%}, paired t-test p = {s.rmse_p_value:.3g}. Why: {explain_verdict(s)}."
         )
+        st.caption("Verdict rules: a change counts only if p < 0.05 and |relative change| >= 5%. Fusion is "
+                   "over-confident if its 95% containment is below 0.85, or if it improves RMSE while its "
+                   "containment is more than 0.03 below the baseline's.")
         st.caption("Settings in the sidebar apply to the next comparison run; this table reflects the last one run.")
 
     with st.expander("Limitations of this simulation", expanded=False):

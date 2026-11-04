@@ -8,6 +8,26 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Verdict "fusion over-confident" (verdict v2, [ADR 0009](docs/adr/0009-verdict-v2.md)): given when fusion's
+  mean 95 % containment is below 0.85, whatever RMSE does, or when fusion improves RMSE but its containment is
+  more than 0.03 below the baseline's. The CLI and the dashboard now say which rule decided each verdict.
+- Holm correction for multiple comparisons: `compare` over several scenarios and `sweep` over several points
+  adjust their p-values across the run, print the adjusted value, and base verdicts on it. The sweep CSV has a
+  `p_adjusted` column.
+
+### Changed
+
+- `compare` and `sweep` run 200 seeds by default instead of 20. `compare` prints its scenarios after all of
+  them have run, because the correction needs every p-value.
+- The learning loop treats "fusion over-confident" like "fusion worsens": either one marks fusion as harmful.
+- Results files are format 2: entries store the Holm-adjusted p-value, and records store the run's whole family
+  of p-values so that `reproduce` can redo the correction. Format 1 files are rejected; re-run them.
+- README results regenerated with 200 seeds. Numbers that moved: `biased_bearing` is now "fusion over-confident"
+  (was "fusion worsens"); fusion RMSE −12.3 % in `reference` (was −11.3 % with 20 seeds), −24.7 % in
+  `noisy_primary` (was −23.8 %), +99.7 % in `biased_bearing` (was +96.8 %). The other verdicts are unchanged.
+
 ## [0.4.0] - 2026-11-02
 
 M2 finished: scenario families that draw a different world for each seed, TOML scenario files, a `sweep`
