@@ -19,22 +19,24 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
-| M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. |
+| M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes are under Unreleased and ship in 0.6.0, because results files change format. |
 | M4 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
 
-| Measure | At the audit (1 Nov 2026, morning) | After 0.2.0 (1 Nov 2026) |
-|---|---|---|
-| Source / tests | about 2,200 lines in `src/`, about 2,600 lines in `tests/` | about 2,470 and 2,800 lines |
-| Fast suite | 249 tests, all passing, about 30 s on Windows / Python 3.12 | 323 tests, about 21 s; slow suite 65 tests, about 60 s |
-| Lint and types | ruff clean; no type checking | ruff and mypy clean, both in CI |
-| Cost of one run (`run_single`, both modes) | about 0.33 s | about 60 ms (about 50 ms after the 2 November speed work) |
-| `compare --seeds 20` (all scenarios) | about 45 s | about 6 s (4 workers) |
-| Scenarios | 4, all sharing one trajectory and one sensor geometry | unchanged |
-| Package version | 0.1.0, with the learning loop and docs under Unreleased | 0.2.0 |
-| `main` branch | only "Initial project structure"; all work is on `chore/repo-hygiene` | all work merged (pull requests 1 – 4) |
-| Git tags | none | `v0.1.0`, `v0.2.0` (with a GitHub release) |
+| Measure | At the audit (1 Nov 2026, morning) | After 0.2.0 (1 Nov 2026) | After 0.5.0 (4 Nov 2026) |
+|---|---|---|---|
+| Source / tests | about 2,200 lines in `src/`, about 2,600 lines in `tests/` | about 2,470 and 2,800 lines | about 3,960 and 4,040 lines |
+| Fast suite | 249 tests, all passing, about 30 s on Windows / Python 3.12 | 323 tests, about 21 s; slow suite 65 tests, about 60 s | 668 tests, about 60 s; slow suite 77 tests, about 90 s |
+| Lint and types | ruff clean; no type checking | ruff and mypy clean, both in CI | unchanged, plus a coverage job |
+| Cost of one run (`run_single`, both modes) | about 0.33 s | about 60 ms (about 50 ms after the 2 November speed work) | about 51 ms |
+| `compare` over all scenarios | about 45 s (20 seeds) | about 6 s (20 seeds, 4 workers) | about 14 s (200 seeds, the new default, 4 workers) |
+| Scenarios | 4, all sharing one trajectory and one sensor geometry | unchanged | 4 built-in, 5 families that draw a world per seed, and TOML scenario files |
+| Verdict | RMSE only, 20 seeds | unchanged | verdict v2: containment rules, Holm correction, 200 seeds |
+| Learning evaluation | 6 + 6 seeds, the same held-out seeds every round | unchanged | 50 + 50 seeds, fresh held-out seeds per round, paired test, sealed test set |
+| Package version | 0.1.0, with the learning loop and docs under Unreleased | 0.2.0 | 0.5.0, with the post-release review fixes under Unreleased |
+| `main` branch | only "Initial project structure"; all work is on `chore/repo-hygiene` | all work merged (pull requests 1 – 4) | all work merged (pull requests up to 18) |
+| Git tags | none | `v0.1.0`, `v0.2.0` (with a GitHub release) | `v0.1.0` – `v0.5.0` |
 
 ### Strengths to keep
 
@@ -52,15 +54,15 @@ Ordered by importance. Each one is addressed by the milestone named in the fourt
 | # | Finding | Effect | Milestone | Status |
 |---|---|---|---|---|
 | 1 | No work is on `main`, there are no tags, and the README says CI has "not yet run". | The project has not actually shipped. | M0 | ✅ Resolved in 0.2.0 |
-| 2 | One run costs about 0.33 s, about 1 ms per sensor update, almost all of it Stone Soup wrapper overhead (about 13,000 `__array_ufunc__` calls per run). Seeds run one after another. | Verdicts rest on 20 seeds and learning on 6+6 seeds and 4 candidates. | M1 | Partly: about 5× faster per run and seeds run in parallel (0.2.0) |
+| 2 | One run costs about 0.33 s, about 1 ms per sensor update, almost all of it Stone Soup wrapper overhead (about 13,000 `__array_ufunc__` calls per run). Seeds run one after another. | Verdicts rest on 20 seeds and learning on 6+6 seeds and 4 candidates. | M1 | ✅ Resolved: about 6× faster per run with seeds in parallel (0.3.0, speed targets revised); verdicts use 200 seeds and learning 50 + 50 since 0.5.0 |
 | 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 | ✅ Resolved in M2: five families draw a world per seed; sweeps vary one parameter at a time |
-| 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | Open |
-| 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | Open |
+| 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | ✅ Resolved in 0.5.0: verdict v2 and GOSPA |
+| 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | ✅ Resolved in 0.5.0: learning evaluation (ADR 0010) |
 | 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Open |
 | 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Open |
 | 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 | Open |
 | 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 | Open |
-| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 done (0.2.0); scenario files and provenance open |
+| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 (0.2.0); scenario files and results with provenance (0.4.0); mypy strict open |
 
 ## Ambition
 
@@ -264,6 +266,29 @@ on the four built-in scenarios the other verdicts are unchanged; learning result
 Result: all met on 4 November. `biased_bearing` is "fusion over-confident"; `reference` and `noisy_primary`
 improve and `distant_bearing` shows no material change (200 seeds, Holm-corrected); every setting accepted by
 `learn --rounds 3` improves the score on the 200 sealed test seeds (paired p < 1e-100).
+
+### Review after the release (4 November 2026)
+
+A code review of `v0.4.0..v0.5.0` found four correctness problems and five cleanups. All were fixed the same day
+in pull request 18 and are listed under Unreleased in the changelog; they ship with 0.6.0, because results files
+move to format 3.
+
+- **Over-confident rule.** Fusion containment below 0.85 counted as "fusion over-confident" even when the
+  baseline was calibrated worse, so `learn` could switch off a fusion filter that was better on both accuracy
+  and calibration. The rule now also requires fusion's containment to be below the baseline's
+  ([ADR 0009](adr/0009-verdict-v2.md), amended). No built-in verdict changes.
+- **Results hash.** `config_hash` left out the Holm family, which decides the adjusted p-values and verdicts:
+  records of the same configuration from different runs shared a hash, and an edited family went undetected.
+  It is now hashed (format 3).
+- **`reproduce`.** A Holm family that did not place every entry made `reproduce` skip entries silently, or fail
+  with an `IndexError`. `load_record` now rejects such a file.
+- **Per-seed score.** The paired acceptance test scored each seed's own containment, while the 2 % margin uses
+  the mean, so the two judged different quantities. Each seed's RMSE is now weighted by the calibration of the
+  whole set ([ADR 0010](adr/0010-learning-evaluation.md), amended). A re-run of `learn --rounds 3` accepts the
+  same settings with the same scores; only the paired p-values change (sealed test from about 1e-12 to below
+  1e-100), and the README shows the new values.
+
+The exit criteria above still hold after the fixes.
 
 ## M4 — Manoeuvres (0.6.0, 18 – 31 Jan 2027)
 
