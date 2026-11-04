@@ -245,7 +245,8 @@ Deliverables:
   coverage cannot differ between modes:
   - "fusion improves" also requires fusion's 95 % containment to be no more than 0.03 below the baseline's
     (otherwise "fusion over-confident")
-  - a new verdict, "fusion over-confident", when containment falls below 0.85 whatever the RMSE does
+  - a new verdict, "fusion over-confident", when containment falls below 0.85 (and below the baseline's)
+    whatever the RMSE does
   - Holm correction when several scenarios or sweep points are compared at once
   - default seed count raised from 20 to 200
 - [x] Learning loop (done 4 November; [ADR 0010](adr/0010-learning-evaluation.md)):
@@ -262,7 +263,7 @@ on the four built-in scenarios the other verdicts are unchanged; learning result
 
 Result: all met on 4 November. `biased_bearing` is "fusion over-confident"; `reference` and `noisy_primary`
 improve and `distant_bearing` shows no material change (200 seeds, Holm-corrected); every setting accepted by
-`learn --rounds 3` improves the score on the 200 sealed test seeds (paired p < 1e-11).
+`learn --rounds 3` improves the score on the 200 sealed test seeds (paired p < 1e-100).
 
 ## M4 — Manoeuvres (0.6.0, 18 – 31 Jan 2027)
 

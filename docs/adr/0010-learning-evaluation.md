@@ -25,9 +25,12 @@ bounds) stands.
   seeds an earlier decision saw. Within a round the incumbent and every candidate share the round's seeds, so
   comparisons stay paired.
 - **Acceptance needs a paired test** as well as the 2 % margin: the candidate's per-seed held-out scores must be
-  lower than the incumbent's in a one-sided paired t-test with p < 0.05 (`paired_improvement_p`). The per-seed
-  score is the same formula as the score, applied to one seed. Comparison summaries now keep every seed's metrics
-  (`ComparisonSummary.per_seed`) for this.
+  lower than the incumbent's in a one-sided paired t-test with p < 0.05 (`paired_improvement_p`). A seed's
+  score is its RMSE times the summary's calibration factor, which comes from the mean containment over all the
+  seeds, as in the score; so the per-seed scores average to the score and the test judges the same quantity as
+  the margin. Calibration is a property of a set of runs: one run's containment is too noisy to score on its own.
+  (Amended 4 November: the first version scored each seed's own containment, which penalised that noise.)
+  Comparison summaries now keep every seed's metrics (`ComparisonSummary.per_seed`) for this.
 - **A sealed test set** (5000–5199, 200 seeds by default) is used once, after the last round, to compare the rule
   book the run started from with the final one, scenario by scenario. Each rule book is scored as it would be
   used, with its own fusion policy. The result is reported and logged; nothing is learned from it.
@@ -40,10 +43,9 @@ bounds) stands.
 ## Consequences
 
 - A `learn --rounds 3` run from an empty rule book takes about a minute with 4 workers instead of about 10 s.
-- In that run, round 1 accepted one setting per scenario, each with paired p < 0.001, and disabled fusion for
-  `biased_bearing`. Round 2 rejected every candidate: none was 2 % better on its fresh held-out seeds, and none
-  passed the paired test (p from 0.09 to 0.98). On the sealed test every accepted change improved the score,
-  with p < 1e-11.
+- In that run, round 1 accepted one setting per scenario, each with paired p < 1e-25, and disabled fusion for
+  `biased_bearing`. Round 2 rejected every candidate: none was 2 % better on its fresh held-out seeds. On the
+  sealed test every accepted change improved the score, with p < 1e-100.
 - The sealed seeds stay clean only if they are not used to choose settings by hand either. Change them
   (`--test-first-seed`) after they have informed a decision.
 - The rule book format is unchanged; old rule books still load.

@@ -4,13 +4,14 @@ A record is JSON with the command, the scenarios or families (as data, not names
 built-in cannot silently change what a record means), the tracker settings, the seeds, every metric summary,
 and provenance: package version, git commit (and whether the working tree had uncommitted changes), Python
 version and the command line. ``config_hash`` is a SHA-256 over what determines the numbers (command, sources,
-sweep points, tracker, seeds), so two records with the same hash must agree. ``reproduce`` re-runs a record and
-lists every metric that differs.
+sweep points, tracker, seeds and the Holm family), so two records with the same hash must agree. ``reproduce``
+re-runs a record and lists every metric that differs.
 
-Format 2 (verdict v2, ADR 0009) adds each entry's Holm-adjusted p-value and, at record level,
-``multiple_comparisons``: the raw p-values of every comparison in the command run and the positions of this
-record's entries among them. A ``compare`` with a rule book can split one run over several records, so the
-whole family is stored and ``reproduce`` can redo the correction exactly.
+Each entry stores its Holm-adjusted p-value and, at record level, ``multiple_comparisons`` holds the raw
+p-values of every comparison in the command run and the positions of this record's entries among them. A
+``compare`` with a rule book can split one run over several records, so the whole family is stored and
+``reproduce`` can redo the correction exactly. The family decides the adjusted p-values and verdicts, so it is
+part of ``config_hash`` (format 3); format 2 left it out.
 
 Wall-clock ``processing_time_s`` is recorded but never compared.
 """
@@ -24,17 +25,17 @@ import platform
 import subprocess
 from collections.abc import Sequence
 from concurrent.futures import Executor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from airspace_fusion import __version__
 from airspace_fusion.config import ScenarioConfig, TrackerConfig
-from airspace_fusion.evaluation import ComparisonSummary, compare_modes, holm_adjust, summary_verdict
+from airspace_fusion.evaluation import ComparisonSummary, compare_modes, holm_adjust, with_adjusted_p
 from airspace_fusion.scenarios import ScenarioFamily, ScenarioSource
 
-RESULTS_FORMAT = 2
+RESULTS_FORMAT = 3
 NON_DETERMINISTIC = ("processing_time_s",)
 TOLERANCE = 1e-9
 
@@ -98,6 +99,8 @@ def config_hash(record: dict[str, Any]) -> str:
         "tracker": record["tracker"],
         "seeds": record["seeds"],
         "entries": [{"source": e["source"], "point": e["point"]} for e in record["entries"]],
+        # The other comparisons of the run set this record's Holm-adjusted p-values and verdicts.
+        "multiple_comparisons": record["multiple_comparisons"],
     }
     return hashlib.sha256(json.dumps(determining, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -165,9 +168,30 @@ def load_record(path: Path) -> dict[str, Any]:
         raise ResultsFileError(f"cannot read results file {path}: {exc}") from exc
     if not isinstance(record, dict) or record.get("format_version") != RESULTS_FORMAT:
         raise ResultsFileError(f"{path}: not a results file in format {RESULTS_FORMAT}")
-    if record.get("config_hash") != config_hash(record):
+    try:
+        matches = record.get("config_hash") == config_hash(record)
+    except (KeyError, TypeError) as exc:
+        raise ResultsFileError(f"{path}: results file is missing {exc}") from exc
+    if not matches:
         raise ResultsFileError(f"{path}: config_hash does not match the recorded configuration (file was edited?)")
+    _check_family(record, path)
     return record
+
+
+def _check_family(record: dict[str, Any], path: Path) -> None:
+    """The Holm family must place every entry exactly once, so that ``reproduce`` checks them all."""
+    family = record["multiple_comparisons"]
+    if family is None:
+        return
+    p_values, positions = family.get("p_values"), family.get("positions")
+    if not (isinstance(p_values, list) and isinstance(positions, list)
+            and all(type(i) is int for i in positions)):
+        raise ResultsFileError(f"{path}: multiple_comparisons needs lists p_values and positions")
+    if len(positions) != len(record["entries"]):
+        raise ResultsFileError(f"{path}: multiple_comparisons has {len(positions)} positions for "
+                               f"{len(record['entries'])} entries")
+    if len(set(positions)) != len(positions) or not all(0 <= i < len(p_values) for i in positions):
+        raise ResultsFileError(f"{path}: multiple_comparisons positions must be distinct indices into p_values")
 
 
 def _differences(expected: Any, actual: Any, where: str) -> list[str]:
@@ -201,14 +225,11 @@ def reproduce(record: dict[str, Any], executor: Executor | None = None) -> list[
     if family is not None:
         # Redo the Holm correction with this record's re-run p-values in their places in the recorded family.
         p_values = [math.nan if p is None else p for p in family["p_values"]]
-        for position, summary in zip(family["positions"], summaries):
+        for position, summary in zip(family["positions"], summaries, strict=True):
             p_values[position] = summary.rmse_p_value
         adjusted = holm_adjust(p_values)
-        summaries = [
-            replace(s, rmse_p_adjusted=adjusted[pos], verdict=summary_verdict(s, adjusted[pos]))
-            for pos, s in zip(family["positions"], summaries)
-        ]
+        summaries = [with_adjusted_p(s, adjusted[pos]) for pos, s in zip(family["positions"], summaries, strict=True)]
     found = []
-    for index, (entry, summary) in enumerate(zip(record["entries"], summaries)):
+    for index, (entry, summary) in enumerate(zip(record["entries"], summaries, strict=True)):
         found += _differences(entry["summary"], summary_to_dict(summary), f"entries[{index}]")
     return found

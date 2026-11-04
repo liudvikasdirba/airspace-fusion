@@ -29,7 +29,10 @@ so GOSPA and RMSE rank the modes the same way.
 (`verdict_v2` and `rmse_verdict` in `evaluation.py`):
 
 1. Fewer than two seeds with an RMSE in both modes: **"insufficient data"** (unchanged).
-2. Fusion's mean 95 % containment below **0.85**: **"fusion over-confident"**, whatever RMSE does.
+2. Fusion's mean 95 % containment below **0.85** and below the baseline's: **"fusion over-confident"**, whatever
+   RMSE does. (Amended 4 November: the rule first ignored the baseline, so a fusion filter better calibrated
+   than a badly calibrated baseline was still called harmful and the learning loop switched it off. The verdict
+   compares the two modes, so low containment that fusion shares with the baseline is not held against it.)
 3. RMSE verdict as before (p < 0.05 and at least 5 % change), with the Holm-adjusted p-value when the comparison
    is one of several.
 4. If that RMSE verdict is "fusion improves" but fusion's containment is more than **0.03** below the
@@ -51,7 +54,9 @@ would repeat the RMSE verdict. Revisit this if a later change lets fusion affect
 **Results files** move to format 2. Each entry stores its raw and adjusted p-value, and the record stores
 `multiple_comparisons`: the raw p-values of the whole run and the positions of its own entries among them. A
 `compare` with a rule book splits a run over several records, so `reproduce` needs the whole family to redo the
-correction. Format 1 files are rejected, because their verdicts follow the old rules.
+correction. Format 1 files are rejected, because their verdicts follow the old rules. Format 3 (amended
+4 November) adds the family to `config_hash`, since it decides the adjusted p-values and verdicts, and
+`load_record` checks that the family places every entry exactly once.
 
 ## Consequences
 

@@ -8,6 +8,24 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Results files are format 3: `config_hash` now covers the Holm family (`multiple_comparisons`), because it
+  decides the adjusted p-values and verdicts. Format 2 files are rejected; re-run them.
+- `compare` over several scenarios prints a progress line to stderr after each one, since verdicts wait for
+  every p-value.
+
+### Fixed
+
+- "Fusion over-confident" for low containment now also requires fusion's containment to be below the
+  baseline's. Before, a fusion filter better calibrated than a badly calibrated baseline was called harmful,
+  and `learn` switched fusion off. No built-in scenario changes verdict.
+- `learn`'s paired acceptance test scores each seed with the calibration factor of the whole set of seeds, as
+  the 2 % margin does, instead of each seed's own containment, which penalised noise. Learned settings and
+  scores are unchanged; the paired p-values are much smaller (sealed test p < 1e-100).
+- Loading a results file now rejects a Holm family that does not place every entry exactly once. Before,
+  `reproduce` silently skipped entries the family left out, or failed with an `IndexError`.
+
 ## [0.5.0] - 2026-11-04
 
 M3 finished: verdict v2 with the "fusion over-confident" verdict and Holm-corrected p-values over 200 seeds, and a

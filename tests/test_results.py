@@ -218,6 +218,40 @@ def test_reproduce_redoes_holm_across_records(tmp_path):
     edited = json.loads(json.dumps(records[1]))
     edited["multiple_comparisons"]["p_values"][0] = 0.5
     assert any("rmse_p_adjusted" in d for d in reproduce(edited))
+    # The family is part of config_hash: the same edit made to a saved file is caught on load.
+    path = save_record(records[1], tmp_path / "edit")
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    on_disk["multiple_comparisons"]["p_values"][0] = 0.5
+    path.write_text(json.dumps(on_disk), encoding="utf-8")
+    with pytest.raises(ResultsFileError, match="config_hash"):
+        load_record(path)
+
+
+def test_same_configuration_in_another_family_hashes_differently():
+    """One scenario compared alone and inside a larger run can get different verdicts, so different hashes."""
+    tracker = TrackerConfig()
+    alone = compare_modes(SCENARIOS["reference"], tracker, SEEDS)
+    family = ComparisonFamily([alone.rmse_p_value, 0.01], [0])
+    entry = [ResultEntry(SCENARIOS["reference"], alone)]
+    assert (build_record("compare", entry, tracker, SEEDS, ["compare"])["config_hash"]
+            != build_record("compare", entry, tracker, SEEDS, ["compare"], family)["config_hash"])
+
+
+@pytest.mark.parametrize("positions, problem", [
+    ([], "0 positions for 1 entries"),
+    ([0, 1], "2 positions for 1 entries"),
+    ([5], "distinct indices"),
+    ([-1], "distinct indices"),
+    (["0"], "needs lists"),
+])
+def test_load_rejects_a_family_that_does_not_place_every_entry(tmp_path, positions, problem):
+    """Otherwise reproduce would silently skip entries, or fail with an IndexError."""
+    tracker = TrackerConfig()
+    s = compare_modes(SCENARIOS["reference"], tracker, SEEDS)
+    record = build_record("compare", [ResultEntry(SCENARIOS["reference"], s)], tracker, SEEDS, ["compare"],
+                          ComparisonFamily([s.rmse_p_value, 0.01], positions))
+    with pytest.raises(ResultsFileError, match=problem):
+        load_record(save_record(record, tmp_path))
 
 
 def test_single_comparison_records_have_no_family():

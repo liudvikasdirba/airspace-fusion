@@ -161,9 +161,11 @@ def _compare(args: argparse.Namespace) -> None:
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); values are mean +/- sample std across seeds\n")
     runs: list[tuple[ScenarioSource, TrackerConfig, ComparisonSummary]] = []
     with seed_executor(args.workers, len(seeds)) as executor:
-        for source in sources:
+        for number, source in enumerate(sources, 1):
             tracker = rules.tracker_for(source.name) if rules else TrackerConfig()
             runs.append((source, tracker, compare_modes(source, tracker, seeds, executor)))
+            if len(sources) > 1:  # verdicts wait for every p-value, so show progress meanwhile
+                print(f"compared {source.name} ({number}/{len(sources)})", file=sys.stderr, flush=True)
     # Every comparison of the run is one family of tests (ADR 0009).
     summaries = with_holm([summary for _, _, summary in runs])
     if len(summaries) > 1:
@@ -243,10 +245,6 @@ def _sweep_row(family: str, parameter: str, point: SweepPoint) -> dict[str, obje
     }
 
 
-def _holm_p(s: ComparisonSummary) -> float:
-    return s.rmse_p_value if s.rmse_p_adjusted is None else s.rmse_p_adjusted
-
-
 def _sweep(args: argparse.Namespace) -> None:
     (source,) = _selected(args, groups=False)
     if not isinstance(source, ScenarioFamily):
@@ -270,7 +268,7 @@ def _sweep(args: argparse.Namespace) -> None:
         low, high = s.rmse_delta_ci95_m
         change = f"{s.rmse_relative_change:+.1%} [{low:+.2f}, {high:+.2f}] m"
         print(f"{point.value:>22.4g}  {base['position_rmse_m'].mean:>12.2f} m  {fused['position_rmse_m'].mean:>10.2f} m"
-              f"  {change:>28}  {_holm_p(s):>8.2g}  {fused['containment_95'].mean:>12.2f}  {s.verdict.value}")
+              f"  {change:>28}  {s.decision_p_value:>8.2g}  {fused['containment_95'].mean:>12.2f}  {s.verdict.value}")
     if args.csv:
         args.csv.parent.mkdir(parents=True, exist_ok=True)
         with args.csv.open("w", newline="", encoding="utf-8") as f:

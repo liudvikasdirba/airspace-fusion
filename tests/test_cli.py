@@ -79,6 +79,14 @@ def test_compare_single_scenario_with_first_seed(capsys):
     assert "Holm" not in out  # a single comparison is not corrected
 
 
+def test_compare_reports_progress_while_verdicts_wait_for_holm(capsys):
+    main(["compare", "--seeds", "2"])
+    captured = capsys.readouterr()
+    progress = re.findall(r"^compared (\S+) \((\d)/(\d)\)$", captured.err, flags=re.MULTILINE)
+    assert [name for name, _, _ in progress] == list(SCENARIOS) and progress[-1][1:] == ("4", "4")
+    assert "compared" not in captured.out
+
+
 def test_compare_output_same_with_parallel_workers(capsys):
     args = ["compare", "--scenario", "reference", "--seeds", "4", "--first-seed", "7"]
 

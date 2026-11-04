@@ -190,10 +190,10 @@ per scenario; round 2 accepted nothing, so the run stopped. Sealed test, seeds 5
 
 | Scenario | Learned settings | Score before → after | Paired p | Verdict (final settings) |
 |---|---|---|---|---|
-| reference | q = 0.625 | 18.82 → 17.63 | 2e-13 | fusion improves |
-| noisy_primary | q = 1.125 | 50.10 → 42.28 | 3e-21 | fusion improves |
-| distant_bearing | q = 0.625 | 20.18 → 18.81 | 7e-12 | no material change |
-| biased_bearing | q = 0.625, fusion recommended against | 93.05 → 18.80 | 4e-133 | fusion over-confident |
+| reference | q = 0.625 | 18.82 → 17.63 | 2e-128 | fusion improves |
+| noisy_primary | q = 1.125 | 50.10 → 42.28 | 7e-123 | fusion improves |
+| distant_bearing | q = 0.625 | 20.18 → 18.81 | 6e-113 | no material change |
+| biased_bearing | q = 0.625, fusion recommended against | 93.05 → 18.80 | 1e-153 | fusion over-confident |
 
 The learned settings carry over to seeds the loop never saw. `noisy_primary` gains most: its filter was the most
 over-confident, and more process noise fixes that. In `biased_bearing` most of the gain comes from turning fusion
@@ -327,7 +327,7 @@ Read RMSE together with coverage, or use GOSPA, which combines both. Trust the e
 
 **Verdict** ([ADR 0009](docs/adr/0009-verdict-v2.md)). Per-seed RMSEs are paired, and the rules apply in order:
 1. **"insufficient data"**: fewer than two seeds have an RMSE in both modes, for example when no track ever forms.
-2. **"fusion over-confident"**: fusion's mean 95 % containment is below 0.85, whatever RMSE does.
+2. **"fusion over-confident"**: fusion's mean 95 % containment is below 0.85 and below the baseline's, whatever RMSE does. When the baseline is calibrated no better, low containment is not fusion's fault and this rule does not apply.
 3. **"fusion improves"** or **"fusion worsens"**: the paired t-test gives p < 0.05 **and** the mean relative change is at least 5 %. If every seed changes by exactly the same amount, the change is treated as certain (p = 0).
 4. An improvement counts only if fusion's containment is at most 0.03 below the baseline's; otherwise the verdict is **"fusion over-confident"** too.
 5. **"no material change"**: any other case.
