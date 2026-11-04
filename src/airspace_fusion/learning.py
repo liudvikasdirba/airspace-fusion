@@ -48,8 +48,10 @@ CONTAINMENT_TOLERANCE = 0.02
 MIN_COVERAGE = 0.95
 # Mean track initiations per run above this means tracks are lost and restarted.
 MAX_TRACK_INITIATIONS = 1.05
-# A candidate must beat the incumbent's held-out score by this relative margin.
+# A candidate must beat the incumbent's held-out score by this relative margin...
 MIN_SCORE_IMPROVEMENT = 0.02
+# ...and the per-seed held-out scores must be lower in a one-sided paired t-test at this level (ADR 0010).
+ACCEPTANCE_SIGNIFICANCE = 0.05
 # ...and may not lose more than this much coverage in any scored mode.
 MAX_COVERAGE_LOSS = 0.01
 
@@ -100,6 +102,43 @@ def score(summary: ComparisonSummary, modes: Sequence[Mode]) -> float:
             return math.inf
         terms.append(rmse * (1.0 + CONTAINMENT_WEIGHT * abs(containment - TARGET_CONTAINMENT)))
     return sum(terms) / len(terms)
+
+
+def _seed_score(rmse: float, containment: float) -> float:
+    return rmse * (1.0 + CONTAINMENT_WEIGHT * abs(containment - TARGET_CONTAINMENT))
+
+
+def seed_scores(summary: ComparisonSummary, modes: Sequence[Mode]) -> list[float]:
+    """``score`` for each seed separately (NaN where a scored mode had no track), in seed order."""
+    if not summary.per_seed:
+        raise ValueError(f"{summary.scenario}: the summary has no per-seed metrics for a paired test")
+    columns = [summary.per_seed[mode] for mode in modes]
+    return [sum(_seed_score(m.position_rmse_m, m.containment_95) for m in row) / len(row) for row in zip(*columns)]
+
+
+def paired_improvement_p(
+    before: ComparisonSummary, after: ComparisonSummary, modes: Sequence[Mode],
+    after_modes: Sequence[Mode] | None = None,
+) -> float:
+    """One-sided paired t-test that ``after`` scores lower than ``before`` on the same seeds.
+
+    ``after`` is scored over ``after_modes`` when given (a rule book whose fusion policy changed), otherwise over
+    ``modes``. Seeds where either score is NaN are dropped. Returns NaN with fewer than two pairs, 0.0 when every seed
+    improves by the same amount, and 1.0 when nothing changes.
+    """
+    if before.seeds != after.seeds:
+        raise ValueError("a paired test needs both summaries on the same seeds")
+    after_scores = seed_scores(after, modes if after_modes is None else after_modes)
+    pairs = [(b, a) for b, a in zip(seed_scores(before, modes), after_scores)
+             if not (math.isnan(b) or math.isnan(a))]
+    if len(pairs) < 2:
+        return math.nan
+    differences = [a - b for b, a in pairs]
+    if all(d == differences[0] for d in differences):  # no variance: the t-test is undefined
+        return 0.0 if differences[0] < 0 else 1.0
+    from scipy import stats  # imported here so that worker processes, which never need it, start faster
+
+    return float(stats.ttest_rel([a for _, a in pairs], [b for b, _ in pairs], alternative="less").pvalue)
 
 
 def find_gaps(summary: ComparisonSummary, modes: Sequence[Mode]) -> list[Gap]:

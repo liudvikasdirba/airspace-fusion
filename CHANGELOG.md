@@ -13,6 +13,11 @@ All notable changes to this project are recorded here. The format follows
 - Verdict "fusion over-confident" (verdict v2, [ADR 0009](docs/adr/0009-verdict-v2.md)): given when fusion's
   mean 95 % containment is below 0.85, whatever RMSE does, or when fusion improves RMSE but its containment is
   more than 0.03 below the baseline's. The CLI and the dashboard now say which rule decided each verdict.
+- Learning evaluation ([ADR 0010](docs/adr/0010-learning-evaluation.md)): `learn` judges each round on fresh
+  held-out seeds, accepts a candidate only if a one-sided paired t-test on per-seed held-out scores also gives
+  p < 0.05, and finishes with a **sealed test**: the starting and final rule books compared once on seeds 5000–5199
+  (`--test-seeds`, `--test-first-seed`; `--test-seeds 0` skips it). `ComparisonSummary.per_seed` keeps every
+  seed's metrics for these paired tests.
 - Holm correction for multiple comparisons: `compare` over several scenarios and `sweep` over several points
   adjust their p-values across the run, print the adjusted value, and base verdicts on it. The sweep CSV has a
   `p_adjusted` column.
@@ -22,6 +27,8 @@ All notable changes to this project are recorded here. The format follows
 - `compare` and `sweep` run 200 seeds by default instead of 20. `compare` prints its scenarios after all of
   them have run, because the correction needs every p-value.
 - The learning loop treats "fusion over-confident" like "fusion worsens": either one marks fusion as harmful.
+- `learn` uses 50 training and 50 held-out seeds by default instead of 6, and warns below 50. A run takes about
+  a minute instead of about 10 s. Learned `noisy_primary` process noise is now 1.125 (was 0.75).
 - Results files are format 2: entries store the Holm-adjusted p-value, and records store the run's whole family
   of p-values so that `reproduce` can redo the correction. Format 1 files are rejected; re-run them.
 - README results regenerated with 200 seeds. Numbers that moved: `biased_bearing` is now "fusion over-confident"

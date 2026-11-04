@@ -52,6 +52,8 @@ from airspace_fusion.scenarios import (
 DEFAULT_RULES_PATH = Path("data/learning/rules.json")
 DEFAULT_LOG_PATH = Path("data/learning/log.jsonl")
 DEFAULT_RESULTS_DIR = Path("data/results")
+# Fewer training or held-out seeds than this cannot resolve the 2 % acceptance margin reliably (ADR 0010).
+MIN_RELIABLE_LEARNING_SEEDS = 50
 RESULTS_DIR_ENV = "AIRSPACE_FUSION_RESULTS_DIR"  # overrides the default results folder
 
 
@@ -301,6 +303,13 @@ def _reproduce(args: argparse.Namespace) -> int:
     return 0
 
 
+def _non_negative_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be at least 0, got {value}")
+    return value
+
+
 def _learn(args: argparse.Namespace) -> int:
     sources = _selected(args)
     try:
@@ -309,9 +318,14 @@ def _learn(args: argparse.Namespace) -> int:
             train_seeds=tuple(range(args.train_first_seed, args.train_first_seed + args.train_seeds)),
             holdout_seeds=tuple(range(args.holdout_first_seed, args.holdout_first_seed + args.holdout_seeds)),
             max_candidates=args.max_candidates,
+            test_seeds=tuple(range(args.test_first_seed, args.test_first_seed + args.test_seeds)),
         )
+        task.check_rounds(args.rounds)
     except ValueError as exc:
         _usage_error(args, str(exc))
+    if min(args.train_seeds, args.holdout_seeds) < MIN_RELIABLE_LEARNING_SEEDS:
+        print(f"warning: fewer than {MIN_RELIABLE_LEARNING_SEEDS} training or held-out seeds; accepted settings "
+              "may not carry over to new seeds", file=sys.stderr)
     # Microseconds keep run ids distinct when several runs start within the same second.
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     rules = _load_rules(args, must_exist=False)
@@ -321,7 +335,9 @@ def _learn(args: argparse.Namespace) -> int:
         orchestrator = Orchestrator(rules, RunLog(run_id, args.log), skills=skills, rules_path=args.rules)
         outcome = orchestrator.run(task, rounds=args.rounds)
     print(f"run {run_id}: train seeds {task.train_seeds[0]}..{task.train_seeds[-1]}, "
-          f"held-out seeds {task.holdout_seeds[0]}..{task.holdout_seeds[-1]}\n")
+          f"fresh held-out seeds every round from {task.holdout_seeds[0]}"
+          + (f", sealed test seeds {task.test_seeds[0]}..{task.test_seeds[-1]}" if task.test_seeds else "")
+          + "\n")
     print("\n".join(outcome.report))
     accepted = sum(lesson.accepted for lesson in outcome.lessons)
     print(f"\nrule book v{outcome.rules.version} saved to {args.rules} "
@@ -376,10 +392,14 @@ def main(argv: list[str] | None = None) -> int:
     learn_p = sub.add_parser("learn", help="tune tracker settings per scenario; results go to a rule book")
     learn_p.add_argument("--scenario", default="all", help=SCENARIO_HELP)
     learn_p.add_argument("--rounds", type=_positive_int, default=2)
-    learn_p.add_argument("--train-seeds", type=_positive_int, default=6)
+    learn_p.add_argument("--train-seeds", type=_positive_int, default=50)
     learn_p.add_argument("--train-first-seed", type=int, default=1000)
-    learn_p.add_argument("--holdout-seeds", type=_positive_int, default=6)
+    learn_p.add_argument("--holdout-seeds", type=_positive_int, default=50,
+                         help="held-out seeds per round; each round uses the next block")
     learn_p.add_argument("--holdout-first-seed", type=int, default=2000)
+    learn_p.add_argument("--test-seeds", type=_non_negative_int, default=200,
+                         help="sealed test seeds, used once after learning (0 skips the test)")
+    learn_p.add_argument("--test-first-seed", type=int, default=5000)
     learn_p.add_argument("--max-candidates", type=_positive_int, default=4)
     learn_p.add_argument("--rules", type=Path, default=DEFAULT_RULES_PATH)
     learn_p.add_argument("--log", type=Path, default=DEFAULT_LOG_PATH)

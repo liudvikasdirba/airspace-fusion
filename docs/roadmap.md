@@ -19,7 +19,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
-| M3 Honest scoring | **In progress** (started 4 November, two months ahead of its window). Done: GOSPA metric (2 November) and verdict v2 with ADR 0009 (4 November). Open: the learning-loop changes. |
+| M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. 0.5.0 can be cut. |
 | M4 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
@@ -246,17 +246,21 @@ Deliverables:
   - a new verdict, "fusion over-confident", when containment falls below 0.85 whatever the RMSE does
   - Holm correction when several scenarios or sweep points are compared at once
   - default seed count raised from 20 to 200
-- Learning loop:
+- [x] Learning loop (done 4 November; [ADR 0010](adr/0010-learning-evaluation.md)):
   - fresh held-out seeds for every round
   - a sealed test set, used once, to report the final result of a `learn` run
-  - at least 50 seeds per training and held-out evaluation
+  - at least 50 seeds per training and held-out evaluation (the default; `learn` warns below it)
   - acceptance by a paired test on held-out seeds as well as the 2 % margin
 - [x] README results regenerated with the changes and the numbers that moved listed in the changelog
-  (verdict part, 4 November).
-- [x] ADR 0009: verdict v2. Learning evaluation gets its own ADR when the learning-loop changes land.
+  (4 November).
+- [x] ADR 0009: verdict v2. Learning evaluation is ADR 0010, so the later ADRs below move up by one.
 
 Exit criteria: `biased_bearing` gets "fusion over-confident" or "fusion worsens", never "no material change";
 on the four built-in scenarios the other verdicts are unchanged; learning results reproduce on the sealed test set.
+
+Result: all met on 4 November. `biased_bearing` is "fusion over-confident"; `reference` and `noisy_primary`
+improve and `distant_bearing` shows no material change (200 seeds, Holm-corrected); every setting accepted by
+`learn --rounds 3` improves the score on the 200 sealed test seeds (paired p < 1e-11).
 
 ## M4 — Manoeuvres (0.6.0, 18 – 31 Jan 2027)
 
@@ -287,7 +291,7 @@ Deliverables:
 - A new metric set: detection delay, false alarms per run, time spent excluded.
 - ROC curves (detection delay against false-alarm rate) from the `bias_magnitude` family.
 - A module dependency rule so that the monitor cannot import the simulator or evaluation.
-- ADR 0010: sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md).
+- ADR 0011: sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md).
 
 Exit criteria:
 - 1.5° bearing bias detected with a median delay of 30 s or less.
@@ -323,7 +327,7 @@ Deliverables:
   scenario name. Rule book format 2, with a clear error when a format 1 file is loaded.
 - Leave-one-family-out evaluation: train on all families but one, test on the one left out.
 - The agents keep their deterministic design and their logs, lessons and bounds.
-- ADR 0011: context-keyed learning. It supersedes [ADR 0005](adr/0005-deterministic-learning-agents.md) in part;
+- ADR 0012: context-keyed learning. It supersedes [ADR 0005](adr/0005-deterministic-learning-agents.md) in part;
   determinism and held-out acceptance carry over.
 
 Exit criteria: on held-out families the learned policy beats the defaults on at least two thirds of families
