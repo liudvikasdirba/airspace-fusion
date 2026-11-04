@@ -132,15 +132,22 @@ workers can help. Comparisons of fewer than 4 seeds always run serially.
 ## Learning loop
 
 `learn` tunes the tracker settings per scenario and writes them to a **rule book** that later runs start from.
-Learning runs use their own seeds (training 1000–1005 and held-out 2000–2005 by default), so the
-[Results](#results-200-seeds-0199-compare) seeds 0–199 remain an independent test.
+Learning runs use their own seeds ([ADR 0010](docs/adr/0010-learning-evaluation.md)), so the
+[Results](#results-200-seeds-0199-compare) seeds 0–199 remain an independent test:
+
+- **training** seeds 1000–1049, reused every round;
+- **held-out** seeds, fresh in every round: 2000–2049 in round 1, 2050–2099 in round 2, and so on;
+- **sealed test** seeds 5000–5199, used once after the last round to report the result.
+
+`learn` warns when fewer than 50 training or held-out seeds are used (`--train-seeds`, `--holdout-seeds`);
+`--test-seeds 0` skips the sealed test.
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli learn --rounds 3
 ```
 
 ```bash
-.venv/Scripts/python -m airspace_fusion.cli compare --seeds 20 --rules data/learning/rules.json
+.venv/Scripts/python -m airspace_fusion.cli compare --rules data/learning/rules.json
 ```
 
 The rule book (`data/learning/rules.json`) and an append-only JSONL run log (`data/learning/log.jsonl`) live under
@@ -158,7 +165,7 @@ scored on the same seeds are not evaluated again.
 | 2 | qa | If fusion made RMSE worse, checks this on the held-out seeds; if confirmed, fusion is recommended against for that scenario and tuning scores the baseline only. |
 | 3 | research | Proposes up to 4 candidate settings based on the gaps: over-confident → more process noise, under-confident → less, lost tracks → longer coast and wider gate, no gaps → a small step either way. Settings already tried are skipped. |
 | 4 | experiment | Scores every candidate on the training seeds and keeps the best one that beats the current settings. |
-| 5 | qa | Accepts that candidate only if its held-out score is at least 2 % better and coverage drops by no more than 0.01. |
+| 5 | qa | Accepts that candidate only if its held-out score is at least 2 % better, its per-seed held-out scores are lower in a one-sided paired t-test (p < 0.05), and coverage drops by no more than 0.01. |
 | 6 | content | Writes the report. |
 
 **Score** is the mean RMSE of the modes in use, multiplied by `1 + 5 × |containment − 0.95|`: a one-point
@@ -175,17 +182,23 @@ Ground truth is used only to score settings, which is possible only in simulatio
 still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
 always give the same result.
 
-Result of `learn --rounds 3` from an empty rule book (about 10 s; converges after round 2), checked on seeds 0–19:
+After the last round, the **sealed test** scores the rule book the run started from against the final one on
+seeds no decision has seen. Each rule book is scored as it would be used, with its own fusion policy.
 
-| Scenario | Learned settings | Baseline RMSE (m) | Fusion RMSE (m) | Baseline 95 % containment |
+Result of `learn --rounds 3` from an empty rule book (about 1 minute with 4 workers). Round 1 accepted one setting
+per scenario; round 2 accepted nothing, so the run stopped. Sealed test, seeds 5000–5199:
+
+| Scenario | Learned settings | Score before → after | Paired p | Verdict (final settings) |
 |---|---|---|---|---|
-| reference | q = 0.625 | 18.83 → 18.62 | 16.70 → 16.56 | 0.92 → 0.94 |
-| noisy_primary | q = 0.75 | 49.67 → 48.38 | 37.83 → 37.25 | 0.88 → 0.91 |
-| distant_bearing | q = 0.625 | 18.83 → 18.62 | 18.83 → 18.62 | 0.92 → 0.94 |
-| biased_bearing | q = 0.625, fusion recommended against | 18.83 → 18.62 | (37.06 → 36.83) | 0.92 → 0.94 |
+| reference | q = 0.625 | 18.82 → 17.63 | 2e-13 | fusion improves |
+| noisy_primary | q = 1.125 | 50.10 → 42.28 | 3e-21 | fusion improves |
+| distant_bearing | q = 0.625 | 20.18 → 18.81 | 7e-12 | no material change |
+| biased_bearing | q = 0.625, fusion recommended against | 93.05 → 18.80 | 4e-133 | fusion over-confident |
 
-The gains are small but appear on seeds the loop never saw. The verdicts do not change. In `biased_bearing`, the
-loop learns that fusion should not be used, but it cannot fix the bias: the bias is a sensor error, not a setting.
+The learned settings carry over to seeds the loop never saw. `noisy_primary` gains most: its filter was the most
+over-confident, and more process noise fixes that. In `biased_bearing` most of the gain comes from turning fusion
+off; the loop cannot fix the bias itself, which is a sensor error, not a setting, and the verdict for fusion with
+the final settings stays "fusion over-confident".
 
 ## Scenarios
 

@@ -9,10 +9,10 @@ import pytest
 from pydantic import ValidationError
 
 import airspace_fusion.agents as agents
-from airspace_fusion.agents import PLAN, LearningTask, Orchestrator, Skills
+from airspace_fusion.agents import PLAN, LearningTask, Orchestrator, SealedTestResult, Skills
 from airspace_fusion.cli import main
 from airspace_fusion.config import SCENARIOS, TrackerConfig
-from airspace_fusion.evaluation import METRIC_NAMES, ComparisonSummary, MetricSummary, Mode, Verdict
+from airspace_fusion.evaluation import METRIC_NAMES, ComparisonSummary, MetricSummary, Mode, RunMetrics, Verdict
 from airspace_fusion.learning import (
     MAX_LESSONS_PER_SCENARIO,
     TUNABLE_BOUNDS,
@@ -24,17 +24,28 @@ from airspace_fusion.learning import (
     RuleBookError,
     RunLog,
     find_gaps,
+    paired_improvement_p,
     propose_candidates,
     same_settings,
     score,
+    seed_scores,
 )
 
 REFERENCE = SCENARIOS["reference"]
 
 
+def seed_noise(seed: int) -> float:
+    """Per-seed RMSE offset, the same for every setting: like common random numbers in a real run."""
+    return float((seed * 7) % 5 - 2)
+
+
+def run_metrics(rmse: float, containment: float) -> RunMetrics:
+    return RunMetrics(rmse, rmse, 0.99, containment, 0, 0, 0, 0, 1, 0.0)
+
+
 def summary(
     rmse: dict[Mode, float], containment: dict[Mode, float], coverage: float = 0.99, initiations: float = 1.0,
-    verdict: Verdict = Verdict.IMPROVES, name: str = "reference",
+    verdict: Verdict = Verdict.IMPROVES, name: str = "reference", seeds: tuple[int, ...] = (0, 1),
 ) -> ComparisonSummary:
     def metrics(mode: Mode) -> dict[str, MetricSummary]:
         values = dict.fromkeys(METRIC_NAMES, 0.0) | {
@@ -44,8 +55,9 @@ def summary(
         return {k: MetricSummary(v, 0.0, 6) for k, v in values.items()}
 
     delta = rmse[Mode.FUSION] - rmse[Mode.BASELINE]
-    return ComparisonSummary(name, (0, 1), {m: metrics(m) for m in Mode}, delta, (delta, delta),
-                             delta / rmse[Mode.BASELINE], 0.01, verdict)
+    per_seed = {m: tuple(run_metrics(rmse[m] + seed_noise(s), containment[m]) for s in seeds) for m in Mode}
+    return ComparisonSummary(name, seeds, {m: metrics(m) for m in Mode}, delta, (delta, delta),
+                             delta / rmse[Mode.BASELINE], 0.01, verdict, per_seed=per_seed)
 
 
 def both(value: float) -> dict[Mode, float]:
@@ -216,7 +228,7 @@ class FakeEvaluator:
         rmse = 20.0 + 40.0 * (q - 0.8) ** 2
         containment = min(0.95, 0.88 + 0.1 * q)
         return summary({Mode.BASELINE: rmse, Mode.FUSION: rmse * 0.9}, both(containment), verdict=self.verdict,
-                       name=scenario.name)
+                       name=scenario.name, seeds=tuple(seeds))
 
 
 def task(**overrides) -> LearningTask:
@@ -403,3 +415,103 @@ def test_cli_learn_rejects_overlapping_seeds(tmp_path, capsys):
         main(["learn", "--train-first-seed", "0", "--holdout-first-seed", "3", "--rules", str(tmp_path / "r.json")])
     assert exc.value.code == 2
     assert "disjoint" in capsys.readouterr().err
+
+
+# -- learning evaluation (ADR 0010) ----------------------------------------------------------------------------
+
+
+def test_holdout_seeds_are_fresh_every_round():
+    t = task(holdout_seeds=(10, 11, 12))
+    assert [t.holdout_seeds_for(r) for r in range(3)] == [(10, 11, 12), (13, 14, 15), (16, 17, 18)]
+    t.check_rounds(3)
+    with pytest.raises(ValueError, match="round 2's held-out seeds"):
+        task(train_seeds=(5, 6), holdout_seeds=(3, 4)).check_rounds(2)  # round 2 would use 5, 6
+
+
+def test_task_seed_sets_must_be_disjoint():
+    with pytest.raises(ValueError, match="sealed test"):
+        task(test_seeds=(1, 9))
+    with pytest.raises(ValueError, match="held-out and sealed test"):
+        task(test_seeds=(4, 9))
+    with pytest.raises(ValueError, match="two seeds"):
+        task(test_seeds=(9,))
+    with pytest.raises(ValueError, match="round 3's held-out seeds"):
+        task(test_seeds=(7, 8)).check_rounds(3)  # held-out (3, 4), (5, 6), (7, 8)
+
+
+def test_each_round_judges_on_its_own_holdout_seeds():
+    evaluator = FakeEvaluator()
+    Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=evaluator)).run(task(), rounds=3)
+    holdouts = {seeds for _, _, seeds in evaluator.calls if seeds not in ((1, 2),)}
+    assert (3, 4) in holdouts and (5, 6) in holdouts
+    assert all(seeds in {(3, 4), (5, 6), (7, 8)} for seeds in holdouts), holdouts
+
+
+def test_seed_scores_and_paired_improvement():
+    seeds = tuple(range(6))
+    worse = summary(both(20.0), both(0.95), seeds=seeds)
+    better = summary(both(18.0), both(0.95), seeds=seeds)
+    assert seed_scores(worse, [Mode.BASELINE]) == [20.0 + seed_noise(s) for s in seeds]
+    assert paired_improvement_p(worse, better, [Mode.BASELINE]) == 0.0  # every seed 2 m better: certain
+    assert paired_improvement_p(better, worse, [Mode.BASELINE]) == 1.0
+    noisy = replace_per_seed(better, {Mode.BASELINE: [18.0, 25.0, 15.0, 22.0, 17.0, 21.0]})
+    p = paired_improvement_p(worse, noisy, [Mode.BASELINE])
+    assert 0.05 < p < 1.0  # mixed per-seed changes: not significant
+    with pytest.raises(ValueError, match="same seeds"):
+        paired_improvement_p(worse, summary(both(18.0), both(0.95), seeds=(7, 8)), [Mode.BASELINE])
+    with pytest.raises(ValueError, match="per-seed"):
+        seed_scores(ComparisonSummary("s", (0, 1), {}, 0.0, (0.0, 0.0), 0.0, 1.0, Verdict.IMPROVES), [Mode.BASELINE])
+
+
+def replace_per_seed(s: ComparisonSummary, rmse: dict[Mode, list[float]]) -> ComparisonSummary:
+    from dataclasses import replace
+
+    per_seed = dict(s.per_seed) | {
+        mode: tuple(run_metrics(r, m.containment_95) for r, m in zip(values, s.per_seed[mode]))
+        for mode, values in rmse.items()
+    }
+    return replace(s, per_seed=per_seed)
+
+
+class NoisyHoldout(FakeEvaluator):
+    """Held-out scores improve on average but not consistently across seeds."""
+
+    def __call__(self, scenario, tracker, seeds):
+        s = super().__call__(scenario, tracker, seeds)
+        if tuple(seeds) == (1, 2):
+            return s
+        jitter = [(-1) ** k * 15.0 * tracker.process_noise_m2_s3 for k in range(len(seeds))]
+        return replace_per_seed(s, {m: [x.position_rmse_m + j for x, j in zip(s.per_seed[m], jitter)] for m in Mode})
+
+
+def test_candidate_needs_a_significant_paired_improvement():
+    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=NoisyHoldout())).run(task())
+    tracker_lessons = [x for x in outcome.lessons if x.action is LessonAction.SET_TRACKER and x.holdout_score_after]
+    assert tracker_lessons and not any(x.accepted for x in tracker_lessons)
+    assert all("not significant" in x.reason for x in tracker_lessons)
+
+
+def test_sealed_test_compares_start_and_final_rule_books_once():
+    evaluator = FakeEvaluator()
+    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=evaluator)).run(
+        task(test_seeds=(50, 51, 52)), rounds=3)
+    (result,) = outcome.sealed_test
+    assert isinstance(result, SealedTestResult) and result.changed
+    assert result.score_after < result.score_before and result.p_value < 0.05
+    assert "improves" in result.describe()
+    assert any("sealed test" in line for line in outcome.report)
+    # Used once, after learning: two evaluations (start and final settings), and nothing before them.
+    test_calls = [i for i, (_, _, seeds) in enumerate(evaluator.calls) if seeds == (50, 51, 52)]
+    assert len(test_calls) == 2 and test_calls[0] == len(evaluator.calls) - 2
+
+
+def test_sealed_test_scores_each_rule_book_with_its_own_fusion_policy():
+    outcome = Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=FakeEvaluator(Verdict.OVER_CONFIDENT))).run(
+        task(test_seeds=(50, 51)))
+    (result,) = outcome.sealed_test
+    assert not outcome.rules.fusion_enabled("reference") and result.changed
+    assert result.verdict_after == Verdict.OVER_CONFIDENT.value
+
+
+def test_no_sealed_test_without_test_seeds():
+    assert Orchestrator(RuleBook(), RunLog("r"), Skills(evaluate=FakeEvaluator())).run(task()).sealed_test == ()

@@ -16,6 +16,11 @@ Each scenario in a task runs the same plan of agent steps:
 After every round, the lessons update the rule book and the next round starts from it.
 The agents are deterministic Python: there is no language model, and the same task, seeds and
 rule book always give the same result.
+
+Seeds (ADR 0010): training seeds are reused every round; held-out seeds are fresh in every round, so no
+round's decision is judged on seeds an earlier decision saw; sealed test seeds are used once, after the last
+round, to report how the final rule book compares with the one the run started from. They never steer a
+decision.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from airspace_fusion import __version__
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.evaluation import ComparisonSummary, Mode, compare_modes
 from airspace_fusion.learning import (
+    ACCEPTANCE_SIGNIFICANCE,
     MAX_COVERAGE_LOSS,
     MIN_SCORE_IMPROVEMENT,
     Gap,
@@ -39,6 +45,7 @@ from airspace_fusion.learning import (
     RunLog,
     find_gaps,
     finite_or_none,
+    paired_improvement_p,
     propose_candidates,
     score,
     scored_modes,
@@ -48,20 +55,42 @@ from airspace_fusion.scenarios import ScenarioSource
 
 @dataclass(frozen=True)
 class LearningTask:
+    """What to learn on. ``holdout_seeds`` are round 1's held-out seeds; later rounds shift them (see below)."""
+
     scenarios: tuple[ScenarioSource, ...]
     train_seeds: tuple[int, ...]
     holdout_seeds: tuple[int, ...]
     max_candidates: int = 4
+    test_seeds: tuple[int, ...] = ()  # sealed: used once, after the last round; empty skips the test
 
     def __post_init__(self) -> None:
         if not self.scenarios:
             raise ValueError("a learning task needs at least one scenario")
         if len(self.train_seeds) < 2 or len(self.holdout_seeds) < 2:
             raise ValueError("training and held-out sets each need at least two seeds for a paired verdict")
-        if set(self.train_seeds) & set(self.holdout_seeds):
-            raise ValueError("training and held-out seeds must be disjoint")
+        if len(self.test_seeds) == 1:
+            raise ValueError("the sealed test set needs at least two seeds for a paired test (or none)")
         if self.max_candidates < 1:
             raise ValueError("max_candidates must be at least 1")
+        self.check_rounds(1)
+
+    def holdout_seeds_for(self, round_index: int) -> tuple[int, ...]:
+        """Held-out seeds of round ``round_index`` (0-based): round 1's seeds shifted by a whole block per round."""
+        stride = max(self.holdout_seeds) - min(self.holdout_seeds) + 1
+        return tuple(seed + round_index * stride for seed in self.holdout_seeds)
+
+    def check_rounds(self, rounds: int) -> None:
+        """Raise ValueError unless training, every round's held-out seeds and the test seeds are disjoint."""
+        train, test = set(self.train_seeds), set(self.test_seeds)
+        if train & test:
+            raise ValueError("training and sealed test seeds must be disjoint")
+        for round_index in range(rounds):
+            holdout = set(self.holdout_seeds_for(round_index))
+            where = f" (round {round_index + 1}'s held-out seeds)" if round_index else ""
+            if holdout & train:
+                raise ValueError(f"training and held-out seeds must be disjoint{where}")
+            if holdout & test:
+                raise ValueError(f"held-out and sealed test seeds must be disjoint{where}")
 
 
 Evaluate = Callable[[ScenarioSource, TrackerConfig, Sequence[int]], ComparisonSummary]
@@ -132,6 +161,7 @@ class StepContext:
     task: LearningTask
     skills: Skills
     log: RunLog
+    holdout_seeds: tuple[int, ...]  # this round's
 
 
 def describe_tracker(t: TrackerConfig) -> str:
@@ -177,7 +207,7 @@ class QAAgent:
 
     def _holdout_incumbent(self, work: ScenarioWork, ctx: StepContext) -> ComparisonSummary:
         if work.holdout is None:
-            work.holdout = ctx.skills.evaluate(work.scenario, work.incumbent, ctx.task.holdout_seeds)
+            work.holdout = ctx.skills.evaluate(work.scenario, work.incumbent, ctx.holdout_seeds)
         return work.holdout
 
     def fusion_policy(self, work: ScenarioWork, ctx: StepContext) -> None:
@@ -208,16 +238,19 @@ class QAAgent:
             return
         _, candidate = work.best
         before = self._holdout_incumbent(work, ctx)
-        after = ctx.skills.evaluate(work.scenario, candidate, ctx.task.holdout_seeds)
+        after = ctx.skills.evaluate(work.scenario, candidate, ctx.holdout_seeds)
         s_before, s_after = score(before, work.modes), score(after, work.modes)
+        p_value = paired_improvement_p(before, after, work.modes)
         problems = []
         if not s_after < s_before * (1.0 - MIN_SCORE_IMPROVEMENT):
             problems.append(f"held-out score {s_after:.4g} not {MIN_SCORE_IMPROVEMENT:.0%} better than {s_before:.4g}")
+        if not p_value < ACCEPTANCE_SIGNIFICANCE:  # also rejects NaN (too few seeds with a track)
+            problems.append(f"held-out improvement not significant (paired p = {p_value:.3g})")
         for mode in work.modes:
             lost = before.metrics[mode]["coverage"].mean - after.metrics[mode]["coverage"].mean
             if lost > MAX_COVERAGE_LOSS:
                 problems.append(f"{mode.value} coverage drops by {lost:.3f}")
-        reason = "; ".join(problems) or f"held-out score {s_before:.4g} -> {s_after:.4g}"
+        reason = "; ".join(problems) or f"held-out score {s_before:.4g} -> {s_after:.4g} (paired p = {p_value:.3g})"
         work.lessons.append(_tracker_lesson(ctx, work, candidate, not problems, reason, s_before, s_after))
 
 
@@ -266,12 +299,36 @@ PLAN: tuple[tuple[str, str], ...] = (
 
 
 @dataclass(frozen=True)
+class SealedTestResult:
+    """One scenario on the sealed test seeds: the rule book the run started from against the final one.
+
+    Each rule book is scored as it would be used, so with its own fusion policy. ``p_value`` is the one-sided
+    paired test that the final rule book scores lower; NaN when the two rule books agree for this scenario.
+    """
+
+    scenario: str
+    changed: bool
+    score_before: float
+    score_after: float
+    p_value: float
+    verdict_after: str  # verdict v2 of the final settings on the test seeds
+
+    def describe(self) -> str:
+        if not self.changed:
+            return f"{self.scenario}: unchanged; score {self.score_after:.4g}, verdict {self.verdict_after}"
+        outcome = "improves" if self.p_value < ACCEPTANCE_SIGNIFICANCE else "no significant change"
+        return (f"{self.scenario}: score {self.score_before:.4g} -> {self.score_after:.4g}, {outcome} "
+                f"(paired p = {self.p_value:.3g}); verdict {self.verdict_after}")
+
+
+@dataclass(frozen=True)
 class LearningOutcome:
     rules: RuleBook
     rounds_run: int
     lessons: tuple[Lesson, ...]
     report: tuple[str, ...]
     failures: tuple[Gap, ...]
+    sealed_test: tuple[SealedTestResult, ...] = ()
 
 
 class Orchestrator:
@@ -290,17 +347,21 @@ class Orchestrator:
         self.agents = {a.name: a for a in (ResearchAgent(), ExperimentAgent(), QAAgent(), ContentAgent())}
 
     def run(self, task: LearningTask, rounds: int = 1) -> LearningOutcome:
-        ctx = StepContext(task, self.skills, self.log)
+        task.check_rounds(rounds)
+        start_rules = self.rules
         all_lessons: list[Lesson] = []
         report: list[str] = []
         failed: dict[str, Gap] = {}  # one entry per scenario, however many rounds it failed in
         rounds_run = 0
         self.log.record("task", package_version=__version__, scenarios=[s.name for s in task.scenarios],
                         train_seeds=task.train_seeds, holdout_seeds=task.holdout_seeds, rounds=rounds,
-                        rules_version=self.rules.version)
+                        test_seeds=task.test_seeds, rules_version=self.rules.version)
         for round_index in range(rounds):
             rounds_run += 1
-            report.append(f"-- round {round_index + 1} (rule book v{self.rules.version})")
+            holdout = task.holdout_seeds_for(round_index)
+            ctx = StepContext(task, self.skills, self.log, holdout)
+            report.append(f"-- round {round_index + 1} (rule book v{self.rules.version}; "
+                          f"held-out seeds {holdout[0]}..{holdout[-1]})")
             works = [self._execute(scenario, ctx) for scenario in task.scenarios]
             lessons = [lesson for w in works for lesson in w.lessons]
             for w in works:
@@ -318,7 +379,35 @@ class Orchestrator:
             if not accepted:
                 report.append("-- nothing new accepted; stopping")
                 break
-        return LearningOutcome(self.rules, rounds_run, tuple(all_lessons), tuple(report), tuple(failed.values()))
+        sealed = self._sealed_test(task, start_rules, failed) if task.test_seeds else []
+        if sealed:
+            report.append(f"-- sealed test, seeds {task.test_seeds[0]}..{task.test_seeds[-1]} (used once, after "
+                          f"learning): rule book v{start_rules.version} -> v{self.rules.version}")
+            report.extend(f"   {result.describe()}" for result in sealed)
+        return LearningOutcome(self.rules, rounds_run, tuple(all_lessons), tuple(report), tuple(failed.values()),
+                               tuple(sealed))
+
+    def _sealed_test(self, task: LearningTask, start: RuleBook, failed: dict[str, Gap]) -> list[SealedTestResult]:
+        """Compare the starting and final rule books once on the sealed test seeds; nothing is learned from it."""
+        results = []
+        for scenario in task.scenarios:
+            if scenario.name in failed:
+                continue
+            name = scenario.name
+            before_tracker, after_tracker = start.tracker_for(name), self.rules.tracker_for(name)
+            before_modes = scored_modes(start.fusion_enabled(name))
+            after_modes = scored_modes(self.rules.fusion_enabled(name))
+            after = self.skills.evaluate(scenario, after_tracker, task.test_seeds)
+            changed = before_tracker != after_tracker or before_modes != after_modes
+            before = self.skills.evaluate(scenario, before_tracker, task.test_seeds) if changed else after
+            # Each rule book is scored as used: mean per-seed score over its own modes, paired by seed.
+            p_value = paired_improvement_p(before, after, before_modes, after_modes) if changed else float("nan")
+            result = SealedTestResult(name, changed, score(before, before_modes), score(after, after_modes),
+                                      p_value, after.verdict.value)
+            self.log.record("sealed_test", scenario=name, changed=changed, score_before=result.score_before,
+                            score_after=result.score_after, p_value=p_value, verdict=after.verdict)
+            results.append(result)
+        return results
 
     def _execute(self, scenario: ScenarioSource, ctx: StepContext) -> ScenarioWork:
         work = ScenarioWork(

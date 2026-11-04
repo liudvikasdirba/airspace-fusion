@@ -12,7 +12,7 @@ import sys
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import repeat
 
@@ -195,6 +195,9 @@ class ComparisonSummary:
     # Holm-adjusted p-value when this comparison was one of several in a command run; None for a single one.
     # The verdict uses it in place of ``rmse_p_value``.
     rmse_p_adjusted: float | None = None
+    # Every seed's metrics, in seed order, for paired tests across settings (the learning loop). Not part of
+    # equality: wall-clock time differs between otherwise identical runs.
+    per_seed: dict[Mode, tuple[RunMetrics, ...]] = field(default_factory=dict, compare=False, repr=False)
 
 
 def paired_verdict(
@@ -377,7 +380,10 @@ def compare_modes(
     )
     containment = {mode: metrics[mode]["containment_95"].mean for mode in Mode}
     verdict = verdict_v2(rmse, containment[Mode.BASELINE], containment[Mode.FUSION])
-    return ComparisonSummary(scenario.name, seeds, metrics, delta, ci, rel, p, verdict)
+    return ComparisonSummary(
+        scenario.name, seeds, metrics, delta, ci, rel, p, verdict,
+        per_seed={mode: tuple(runs) for mode, runs in per_mode.items()},
+    )
 
 
 @dataclass(frozen=True)
