@@ -20,7 +20,8 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes are under Unreleased and ship in 0.6.0, because results files change format. |
-| M4 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
+| M4 Manoeuvres | **Started early** (5 November): the IMM tracker (opt-in, ADR 0011), its consistency tests and the `manoeuvre_intensity` results are done, and all three exit criteria are met. Open: the learning loop choosing the motion model, and the decision to make the IMM the default. |
+| M5 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
 
@@ -58,7 +59,7 @@ Ordered by importance. Each one is addressed by the milestone named in the fourt
 | 3 | Every scenario shares one start point, heading, turn and sensor layout. Seeds vary only noise and a 0.05 m/s² random acceleration. | "Fusion improves RMSE by 11 %" holds for one geometry, not in general. | M2 | ✅ Resolved in M2: five families draw a world per seed; sweeps vary one parameter at a time |
 | 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | ✅ Resolved in 0.5.0: verdict v2 and GOSPA |
 | 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | ✅ Resolved in 0.5.0: learning evaluation (ADR 0010) |
-| 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Open |
+| 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Partly: the opt-in IMM brings it to 0.96 (5 Nov); the default is still constant velocity |
 | 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Open |
 | 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 | Open |
 | 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 | Open |
@@ -294,15 +295,31 @@ The exit criteria above still hold after the fixes.
 
 **Goal:** remove the motion-model mismatch so that containment problems come from sensors, not from the turn.
 
-Deliverables:
-- An interacting multiple model (IMM) tracker with constant-velocity and coordinated-turn models, in the NumPy
-  kernel, selectable per run. The constant-velocity tracker stays the default until the IMM passes its tests.
-- NEES/NIS consistency tests extended to the IMM, including a negative control.
-- The `manoeuvre_intensity` family used to show where the IMM helps and where it does not.
-- The learning loop can choose between the two motion models.
+Status: started early, on 5 November 2026. The first three deliverables and all exit criteria are done.
 
-Exit criteria: baseline 95 % containment in `reference` within 0.95 ± 0.02 (today 0.92); RMSE during the turn
-lower than with the constant-velocity model; no loss on straight segments beyond 5 %.
+Deliverables:
+- [x] An interacting multiple model (IMM) tracker with constant-velocity and coordinated-turn models, in the NumPy
+  kernel, selectable per run. The constant-velocity tracker stays the default until the IMM passes its tests.
+  *`IMMTracker` ([ADR 0011](adr/0011-imm-tracker.md)): constant velocity plus coordinated turns at ±3°/s,
+  selected with `motion_model = "imm"` or `--motion-model imm`. It now passes its tests; whether it becomes the
+  default is open, because that changes every published result and the golden file.*
+- [x] NEES/NIS consistency tests extended to the IMM, including a negative control.
+  *With matched noise it is consistent or mildly conservative (average NEES 3.3, containment 0.95); with 100x too
+  little noise it fails. Also checked against the constant-velocity tracker (three identical models agree) and the
+  turn model against an exact circle.*
+- [x] The `manoeuvre_intensity` family used to show where the IMM helps and where it does not.
+  *README "Turns: the IMM tracker": up to its 3°/s turn rate the IMM fixes error and over-confidence (containment
+  0.83 to 0.96 at 3°/s); faster turns get lower error but stay over-confident (0.77). A learned or multiple turn
+  rate is the next step for those.*
+- [ ] The learning loop can choose between the two motion models.
+
+Exit criteria (all met on 5 November, `tests/test_statistics.py`, 40 seeds; README figures from 60 seeds):
+- [x] Baseline 95 % containment in `reference` within 0.95 ± 0.02 (today 0.92). *0.96 with the IMM.*
+- [x] RMSE during the turn lower than with the constant-velocity model. *16.9 against 22.9 m.*
+- [x] No loss on straight segments beyond 5 %. *A gain: 13.8 against 15.8 m.*
+
+Also found: the IMM's tighter straight model makes an unmodelled bearing bias more harmful (fusion containment in
+`biased_bearing` 0.29 to 0.16), a case for the M5 sensor health monitor.
 
 Risk: IMM tuning takes longer than two weeks. Mitigation: a single coordinated-turn rate is enough for 0.6.0;
 a learned turn rate can follow later.

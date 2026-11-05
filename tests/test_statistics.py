@@ -192,3 +192,30 @@ def test_m3_exit_criteria_on_builtin_scenarios():
         "distant_bearing": Verdict.NO_MATERIAL_CHANGE,
         "biased_bearing": Verdict.OVER_CONFIDENT,
     }, verdicts
+
+
+def test_m4_exit_criteria_on_reference():
+    """M4: with the IMM, baseline 95 % containment in `reference` is within 0.95 +/- 0.02, RMSE during the turn
+    is lower than with the constant-velocity model, and straight segments lose no more than 5 %.
+
+    Calibration (60 seeds): containment 0.931 -> 0.959, turn RMSE 22.9 -> 16.9 m, straight 15.8 -> 13.8 m.
+    """
+    from airspace_fusion.evaluation import segment_squared_errors
+
+    def stats_for(tracker: TrackerConfig) -> tuple[float, float, float]:
+        turn, straight, contained = [], [], []
+        for seed in range(40):
+            run = run_single(SCENARIOS["reference"], tracker, seed)
+            segments = segment_squared_errors(run, Mode.BASELINE)
+            turn += segments["turn"]
+            straight += segments["straight"]
+            contained.append(run.modes[Mode.BASELINE].metrics.containment_95)
+        assert len(turn) > 1000 and len(straight) > 3000  # both segments well covered
+        return math.sqrt(np.mean(turn)), math.sqrt(np.mean(straight)), float(np.mean(contained))
+
+    cv_turn, cv_straight, cv_containment = stats_for(TrackerConfig())
+    imm_turn, imm_straight, imm_containment = stats_for(TrackerConfig(motion_model="imm"))
+    assert abs(imm_containment - 0.95) <= 0.02, imm_containment
+    assert cv_containment < 0.95 - 0.01  # the constant-velocity filter is over-confident through the turn
+    assert imm_turn < cv_turn, (imm_turn, cv_turn)
+    assert imm_straight <= 1.05 * cv_straight, (imm_straight, cv_straight)

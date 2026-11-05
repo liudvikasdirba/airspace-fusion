@@ -42,3 +42,4 @@ each version.
 | [ADR 0008: Scenario files and scenario families](adr/0008-scenario-files-and-families.md) | accepted | TOML scenario files; families draw a world per seed from their own stream |
 | [ADR 0009: Verdict v2](adr/0009-verdict-v2.md) | accepted | Containment rules, "fusion over-confident", Holm correction, 200 seeds |
 | [ADR 0010: Learning evaluation](adr/0010-learning-evaluation.md) | accepted | Fresh held-out seeds per round, paired acceptance, sealed test set |
+| [ADR 0011: IMM tracker with fixed-rate coordinated turns](adr/0011-imm-tracker.md) | accepted | Constant velocity plus ±3°/s turn models; opt-in with `motion_model = "imm"` |

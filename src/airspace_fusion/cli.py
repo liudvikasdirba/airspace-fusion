@@ -112,7 +112,7 @@ def _selected(args: argparse.Namespace, groups: bool = True) -> list[ScenarioSou
 def _run(args: argparse.Namespace) -> None:
     (source,) = _selected(args, groups=False)
     scenario = source.for_seed(args.seed)
-    run = run_single(scenario, TrackerConfig(), args.seed)
+    run = run_single(scenario, _tracker(args), args.seed)
     print(f"scenario={scenario.name} seed={args.seed} records={len(run.simulation.records)} "
           f"valid={len(run.measurements)} invalid={len(run.invalid_records)}")
     if isinstance(source, ScenarioFamily):
@@ -121,6 +121,20 @@ def _run(args: argparse.Namespace) -> None:
     for name in METRIC_NAMES:
         values = [getattr(run.modes[m].metrics, name) for m in Mode]
         print(f"{name:<24}" + "".join(f"{v:>14.4g}" for v in values))
+
+
+MOTION_MODEL_HELP = (
+    "tracker motion model: cv (nearly constant velocity, the default) or imm (constant velocity plus "
+    "coordinated turns; ADR 0011). With --rules, replaces the rule book's model"
+)
+
+
+def _tracker(args: argparse.Namespace, base: TrackerConfig | None = None) -> TrackerConfig:
+    """Default (or rule-book) tracker settings, with --motion-model applied when given."""
+    tracker = base or TrackerConfig()
+    if args.motion_model is None:
+        return tracker
+    return TrackerConfig.model_validate(tracker.model_dump() | {"motion_model": args.motion_model})
 
 
 def _usage_error(args: argparse.Namespace, message: str) -> NoReturn:
@@ -162,7 +176,7 @@ def _compare(args: argparse.Namespace) -> None:
     runs: list[tuple[ScenarioSource, TrackerConfig, ComparisonSummary]] = []
     with seed_executor(args.workers, len(seeds)) as executor:
         for number, source in enumerate(sources, 1):
-            tracker = rules.tracker_for(source.name) if rules else TrackerConfig()
+            tracker = _tracker(args, rules.tracker_for(source.name) if rules else None)
             runs.append((source, tracker, compare_modes(source, tracker, seeds, executor)))
             if len(sources) > 1:  # verdicts wait for every p-value, so show progress meanwhile
                 print(f"compared {source.name} ({number}/{len(sources)})", file=sys.stderr, flush=True)
@@ -255,7 +269,7 @@ def _sweep(args: argparse.Namespace) -> None:
     except ValueError as exc:
         _usage_error(args, str(exc))
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
-    tracker = TrackerConfig()
+    tracker = _tracker(args)
     print(f"sweep of {args.parameter} in family {source.name}; seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}); "
           "every point uses the same seeds and the same other draws\n")
     with seed_executor(args.workers, len(seeds)) as executor:
@@ -429,6 +443,9 @@ def main(argv: list[str] | None = None) -> int:
     scn_p = sub.add_parser("scenarios", help="list scenarios and families, or print one as TOML")
     scn_p.add_argument("--toml", metavar="NAME", help="print this scenario or family as a scenario file")
     scn_p.set_defaults(func=_scenarios, parser=scn_p)
+
+    for subparser in (run_p, cmp_p, swp_p):
+        subparser.add_argument("--motion-model", choices=("cv", "imm"), help=MOTION_MODEL_HELP)
 
     for subparser in (run_p, cmp_p, swp_p, learn_p, scn_p):
         subparser.add_argument("--scenario-file", type=Path, action="append", metavar="PATH",
