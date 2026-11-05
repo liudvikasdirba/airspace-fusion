@@ -20,7 +20,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes are under Unreleased and ship in 0.6.0, because results files change format. |
-| M4 Manoeuvres | **Started early** (5 November): the IMM tracker (opt-in, ADR 0011), its consistency tests and the `manoeuvre_intensity` results are done, and all three exit criteria are met. Open: the learning loop choosing the motion model, and the decision to make the IMM the default. |
+| M4 Manoeuvres | **Started early** (5 November): the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model are done, and all three exit criteria are met. The factory default stays constant velocity (decided 5 November); release pending. |
 | M5 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
@@ -295,14 +295,15 @@ The exit criteria above still hold after the fixes.
 
 **Goal:** remove the motion-model mismatch so that containment problems come from sensors, not from the turn.
 
-Status: started early, on 5 November 2026. The first three deliverables and all exit criteria are done.
+Status: started early, on 5 November 2026. All deliverables and exit criteria are done.
 
 Deliverables:
 - [x] An interacting multiple model (IMM) tracker with constant-velocity and coordinated-turn models, in the NumPy
   kernel, selectable per run. The constant-velocity tracker stays the default until the IMM passes its tests.
   *`IMMTracker` ([ADR 0011](adr/0011-imm-tracker.md)): constant velocity plus coordinated turns at ±3°/s,
-  selected with `motion_model = "imm"` or `--motion-model imm`. It now passes its tests; whether it becomes the
-  default is open, because that changes every published result and the golden file.*
+  selected with `motion_model = "imm"` or `--motion-model imm`. It passes its tests. It is not the factory
+  default (decided 5 November): that would change every published result and the golden file, and the learning
+  loop now chooses it per scenario instead.*
 - [x] NEES/NIS consistency tests extended to the IMM, including a negative control.
   *With matched noise it is consistent or mildly conservative (average NEES 3.3, containment 0.95); with 100x too
   little noise it fails. Also checked against the constant-velocity tracker (three identical models agree) and the
@@ -311,7 +312,12 @@ Deliverables:
   *README "Turns: the IMM tracker": up to its 3°/s turn rate the IMM fixes error and over-confidence (containment
   0.83 to 0.96 at 3°/s); faster turns get lower error but stay over-confident (0.77). A learned or multiple turn
   rate is the next step for those.*
-- [ ] The learning loop can choose between the two motion models.
+- [x] The learning loop can choose between the two motion models.
+  *The other motion model is a candidate every round (first when the constant-velocity tracker is over-confident),
+  and an IMM is tuned through its own process noises. From an empty rule book it chose the IMM in all four
+  built-in scenarios; sealed-test scores fell 16–24 % in the three where fusion stays on (README "Learning
+  loop"). The factory default stays constant velocity (decided 5 November): a rule book picks the IMM where it
+  helps, and published results and the golden file stay unchanged.*
 
 Exit criteria (all met on 5 November, `tests/test_statistics.py`, 40 seeds; README figures from 60 seeds):
 - [x] Baseline 95 % containment in `reference` within 0.95 ± 0.02 (today 0.92). *0.96 with the IMM.*

@@ -63,7 +63,11 @@ TUNABLE_BOUNDS: dict[str, tuple[float, float]] = {
     "process_noise_m2_s3": (0.05, 5.0),
     "gate_probability": (0.99, 0.9999),
     "max_coast_s": (4.0, 20.0),
+    "imm_straight_process_noise_m2_s3": (0.005, 5.0),
+    "imm_turn_process_noise_m2_s3": (0.005, 5.0),
 }
+# The learning update may also switch ``motion_model`` (M4): it is a choice, not a range.
+MOTION_MODELS: Final = ("cv", "imm")
 
 
 class GapKind(str, Enum):
@@ -176,8 +180,28 @@ def _round(value: float) -> float:
     return float(f"{value:.4g}")
 
 
+def _active_settings(tracker: TrackerConfig) -> tuple[str, ...]:
+    """The tunable settings that change what ``tracker`` does: each motion model has its own process noise."""
+    if tracker.motion_model == "imm":
+        return ("gate_probability", "max_coast_s", "imm_straight_process_noise_m2_s3", "imm_turn_process_noise_m2_s3")
+    return ("process_noise_m2_s3", "gate_probability", "max_coast_s")
+
+
 def same_settings(a: TrackerConfig, b: TrackerConfig) -> bool:
-    return all(math.isclose(getattr(a, k), getattr(b, k), rel_tol=1e-6) for k in TUNABLE_BOUNDS)
+    """Whether two trackers behave the same: same motion model and the same settings that model uses.
+
+    Settings of the other model are ignored, so an IMM candidate is not proposed again just because the
+    constant-velocity process noise it carries along differs.
+    """
+    if a.motion_model != b.motion_model:
+        return False
+    return all(math.isclose(getattr(a, k), getattr(b, k), rel_tol=1e-6) for k in _active_settings(a))
+
+
+def _scale_noise(tracker: TrackerConfig, factor: float) -> dict[str, float | str]:
+    """Scale the process noise of the tracker's own motion model (both IMM noises together)."""
+    keys = [k for k in _active_settings(tracker) if k.endswith("process_noise_m2_s3")]
+    return {k: getattr(tracker, k) * factor for k in keys}
 
 
 def propose_candidates(
@@ -186,24 +210,32 @@ def propose_candidates(
     """Gap-directed neighbours of ``tracker``, within bounds, excluding settings already tried.
 
     Over-confidence asks for more process noise, under-confidence for less; lost tracks ask for a
-    longer coast and a wider gate. With no gaps, a small step either way explores RMSE alone.
+    longer coast and a wider gate. With no gaps, a small step either way explores RMSE alone. The
+    other motion model (with its default settings) is always a candidate too: first when the
+    constant-velocity tracker is over-confident, which is what an unmodelled turn looks like, and
+    last otherwise. The held-out test decides, as for any other change (ADR 0011).
     """
     kinds = {g.kind for g in gaps}
-    q = tracker.process_noise_m2_s3
-    changes: list[dict[str, float]] = []
+    other = "imm" if tracker.motion_model == "cv" else "cv"
+    switch: dict[str, float | str] = {"motion_model": other}
+    changes: list[dict[str, float | str]] = []
     if GapKind.OVER_CONFIDENT in kinds:
-        changes += [{"process_noise_m2_s3": q * 1.5}, {"process_noise_m2_s3": q * 2.25}]
+        if other == "imm":
+            changes.append(switch)
+        changes += [_scale_noise(tracker, 1.5), _scale_noise(tracker, 2.25)]
     if GapKind.UNDER_CONFIDENT in kinds:
-        changes += [{"process_noise_m2_s3": q / 1.5}, {"process_noise_m2_s3": q / 2.25}]
+        changes += [_scale_noise(tracker, 1 / 1.5), _scale_noise(tracker, 1 / 2.25)]
     if kinds & {GapKind.TRACK_RESTARTS, GapKind.LOW_COVERAGE}:
         changes += [{"max_coast_s": tracker.max_coast_s * 1.5},
                     {"gate_probability": 1.0 - (1.0 - tracker.gate_probability) / 3.0}]
     if not kinds & {GapKind.OVER_CONFIDENT, GapKind.UNDER_CONFIDENT}:
-        changes += [{"process_noise_m2_s3": q * 1.25}, {"process_noise_m2_s3": q / 1.25}]
+        changes += [_scale_noise(tracker, 1.25), _scale_noise(tracker, 1 / 1.25)]
+    if switch not in changes:
+        changes.append(switch)
 
     candidates: list[TrackerConfig] = []
     for change in changes:
-        update = {k: _round(_clamp(k, v)) for k, v in change.items()}
+        update = {k: v if isinstance(v, str) else _round(_clamp(k, v)) for k, v in change.items()}
         candidate = TrackerConfig.model_validate(tracker.model_dump() | update)
         if any(same_settings(candidate, c) for c in (tracker, *candidates, *tried)):
             continue

@@ -182,8 +182,11 @@ containment shortfall costs as much as 5 % RMSE, so a candidate cannot win by be
 average, and a harmful verdict ("fusion worsens" or "fusion over-confident").
 
 Every tried change becomes a **lesson**, whether accepted or rejected. The learning update applies the accepted
-lessons to the rule book, re-checked against fixed bounds (process noise 0.05–5, gate 0.99–0.9999, coast 4–20 s),
-and keeps the newest 100 lessons per scenario as memory. A run stops early when a round accepts nothing.
+lessons to the rule book, re-checked against fixed bounds (process noise 0.05–5, IMM process noises 0.005–5,
+gate 0.99–0.9999, coast 4–20 s), and keeps the newest 100 lessons per scenario as memory. The **motion model** is
+a candidate too: every round tries the other one (constant velocity or the [IMM](#turns-the-imm-tracker)) with its
+default settings, first when the constant-velocity tracker is over-confident, and it is kept only if it passes the
+same held-out test. An IMM tracker is then tuned through its own process noises. A run stops early when a round accepts nothing.
 
 Ground truth is used only to score settings, which is possible only in simulation. The tracker is unchanged and
 still never sees truth. The agents are deterministic Python, not language models: the same seeds and rule book
@@ -192,20 +195,22 @@ always give the same result.
 After the last round, the **sealed test** scores the rule book the run started from against the final one on
 seeds no decision has seen. Each rule book is scored as it would be used, with its own fusion policy.
 
-Result of `learn --rounds 3` from an empty rule book (about 1 minute with 4 workers). Round 1 accepted one setting
-per scenario; round 2 accepted nothing, so the run stopped. Sealed test, seeds 5000–5199:
+Result of `learn --rounds 3` from an empty rule book (about 3.5 minutes with 4 workers). Round 1 chose the IMM in
+every scenario, beating the best constant-velocity step; round 2 tried smaller and larger IMM noises, accepted
+nothing, and the run stopped. Sealed test, seeds 5000–5199:
 
 | Scenario | Learned settings | Score before → after | Paired p | Verdict (final settings) |
 |---|---|---|---|---|
-| reference | q = 0.625 | 18.82 → 17.63 | 2e-128 | fusion improves |
-| noisy_primary | q = 1.125 | 50.10 → 42.28 | 7e-123 | fusion improves |
-| distant_bearing | q = 0.625 | 20.18 → 18.81 | 6e-113 | no material change |
-| biased_bearing | q = 0.625, fusion recommended against | 93.05 → 18.80 | 1e-153 | fusion over-confident |
+| reference | IMM (defaults) | 18.82 → 15.74 | 6e-79 | fusion improves |
+| noisy_primary | IMM (defaults) | 50.10 → 38.02 | 8e-111 | fusion improves |
+| distant_bearing | IMM (defaults) | 20.18 → 16.74 | 7e-76 | no material change |
+| biased_bearing | IMM (defaults), fusion recommended against | 93.05 → 16.74 | 3e-155 | fusion over-confident |
 
-The learned settings carry over to seeds the loop never saw. `noisy_primary` gains most: its filter was the most
-over-confident, and more process noise fixes that. In `biased_bearing` most of the gain comes from turning fusion
-off; the loop cannot fix the bias itself, which is a sensor error, not a setting, and the verdict for fusion with
-the final settings stays "fusion over-confident".
+The learned settings carry over to seeds the loop never saw. Before the IMM was a candidate, the loop could only
+raise the constant-velocity process noise and reached 17.63, 42.28, 18.81 and 18.80. `noisy_primary` gains most:
+its filter was the most over-confident, and the IMM removes the over-confidence gap there. In `biased_bearing` most
+of the gain comes from turning fusion off; the loop cannot fix the bias itself, which is a sensor error, not a
+setting, and the verdict for fusion with the final settings stays "fusion over-confident".
 
 ## Scenarios
 
