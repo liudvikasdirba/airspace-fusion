@@ -106,9 +106,45 @@ def gap(kind: GapKind) -> Gap:
 def test_over_confidence_raises_process_noise_and_under_confidence_lowers_it():
     base = TrackerConfig()
     up = propose_candidates(base, [gap(GapKind.OVER_CONFIDENT)], [], 4)
-    assert [c.process_noise_m2_s3 for c in up] == [0.75, 1.125]
+    assert [c.process_noise_m2_s3 for c in up if c.motion_model == "cv"] == [0.75, 1.125]
     down = propose_candidates(base, [gap(GapKind.UNDER_CONFIDENT)], [], 4)
-    assert all(c.process_noise_m2_s3 < base.process_noise_m2_s3 for c in down)
+    assert all(c.process_noise_m2_s3 < base.process_noise_m2_s3 for c in down if c.motion_model == "cv")
+
+
+def test_over_confidence_tries_the_imm_first():
+    """An over-confident constant-velocity tracker is what an unmodelled turn looks like (M4)."""
+    first, *rest = propose_candidates(TrackerConfig(), [gap(GapKind.OVER_CONFIDENT)], [], 4)
+    assert first == TrackerConfig(motion_model="imm")
+    assert all(c.motion_model == "cv" for c in rest)
+
+
+@pytest.mark.parametrize("kind", [None, GapKind.UNDER_CONFIDENT, GapKind.TRACK_RESTARTS])
+def test_the_other_motion_model_is_always_a_candidate_last(kind):
+    gaps = [gap(kind)] if kind else []
+    cands = propose_candidates(TrackerConfig(), gaps, [], 10)
+    assert cands[-1] == TrackerConfig(motion_model="imm")
+    assert propose_candidates(TrackerConfig(motion_model="imm"), gaps, [], 10)[-1].motion_model == "cv"
+    # With a tight cap, the gap-directed steps come first.
+    assert all(c.motion_model == "cv" for c in propose_candidates(TrackerConfig(), gaps, [], 2))
+
+
+def test_imm_trackers_tune_their_own_process_noise():
+    imm = TrackerConfig(motion_model="imm")
+    up = propose_candidates(imm, [gap(GapKind.OVER_CONFIDENT)], [], 4)
+    assert [(c.imm_straight_process_noise_m2_s3, c.imm_turn_process_noise_m2_s3) for c in up[:2]] == [
+        (0.075, 0.075), (0.1125, 0.1125)]
+    assert all(c.process_noise_m2_s3 == imm.process_noise_m2_s3 for c in up)  # unused by the IMM
+    assert up[-1] == TrackerConfig()  # switching back is never proposed first
+
+
+def test_same_settings_compares_the_motion_model_and_only_the_settings_it_uses():
+    cv, imm = TrackerConfig(), TrackerConfig(motion_model="imm")
+    assert not same_settings(cv, imm)
+    assert same_settings(imm, imm.model_copy(update={"process_noise_m2_s3": 2.0}))
+    assert not same_settings(imm, imm.model_copy(update={"imm_turn_process_noise_m2_s3": 0.1}))
+    assert same_settings(cv, cv.model_copy(update={"imm_turn_process_noise_m2_s3": 0.1}))
+    # A tried IMM is not proposed again.
+    assert all(c.motion_model == "cv" for c in propose_candidates(cv, [gap(GapKind.OVER_CONFIDENT)], [imm], 4))
 
 
 def test_lost_tracks_lengthen_coast_and_widen_gate():
@@ -121,10 +157,10 @@ def test_lost_tracks_lengthen_coast_and_widen_gate():
 def test_proposals_stay_in_bounds_skip_tried_and_respect_the_cap():
     top = TrackerConfig(process_noise_m2_s3=TUNABLE_BOUNDS["process_noise_m2_s3"][1])
     cands = propose_candidates(top, [gap(GapKind.OVER_CONFIDENT)], [], 4)
-    assert cands == []  # both steps clamp to the incumbent
+    assert [c.motion_model for c in cands] == ["imm"]  # both noise steps clamp to the incumbent
     base = TrackerConfig()
     first = propose_candidates(base, [], [], 4)
-    assert len(first) == 2
+    assert len(first) == 3
     again = propose_candidates(base, [], [first[0]], 4)
     assert not any(same_settings(c, first[0]) for c in again)
     assert len(propose_candidates(base, [gap(GapKind.OVER_CONFIDENT), gap(GapKind.TRACK_RESTARTS)], [], 3)) == 3
@@ -213,21 +249,30 @@ def test_run_log_writes_strict_json_lines(tmp_path):
 
 
 class FakeEvaluator:
-    """RMSE is a bowl around q = 0.8 and containment rises with q, so more process noise helps up to 0.8."""
+    """RMSE is a bowl around q = 0.8 and containment rises with q, so more process noise helps up to 0.8.
 
-    def __init__(self, verdict: Verdict = Verdict.IMPROVES, fail_times: int = 0) -> None:
-        self.calls: list[tuple[str, float, tuple[int, ...]]] = []
+    The IMM is a flat ``imm_rmse`` with containment 0.95, worse than the bowl's floor unless set lower. Calls record
+    the constant-velocity q, or ``"imm"`` for an IMM tracker.
+    """
+
+    def __init__(self, verdict: Verdict = Verdict.IMPROVES, fail_times: int = 0, imm_rmse: float = 35.0) -> None:
+        self.calls: list[tuple[str, float | str, tuple[int, ...]]] = []
         self.verdict = verdict
         self.fail_times = fail_times
+        self.imm_rmse = imm_rmse
 
     def __call__(self, scenario, tracker, seeds):
         if self.fail_times:
             self.fail_times -= 1
             raise RuntimeError("transient failure")
-        q = tracker.process_noise_m2_s3
-        self.calls.append((scenario.name, q, tuple(seeds)))
-        rmse = 20.0 + 40.0 * (q - 0.8) ** 2
-        containment = min(0.95, 0.88 + 0.1 * q)
+        if tracker.motion_model == "imm":
+            self.calls.append((scenario.name, "imm", tuple(seeds)))
+            rmse, containment = self.imm_rmse, 0.95
+        else:
+            q = tracker.process_noise_m2_s3
+            self.calls.append((scenario.name, q, tuple(seeds)))
+            rmse = 20.0 + 40.0 * (q - 0.8) ** 2
+            containment = min(0.95, 0.88 + 0.1 * q)
         return summary({Mode.BASELINE: rmse, Mode.FUSION: rmse * 0.9}, both(containment), verdict=self.verdict,
                        name=scenario.name, seeds=tuple(seeds))
 
@@ -244,6 +289,26 @@ def test_task_rules():
         task(train_seeds=(1,))
     with pytest.raises(ValueError, match="scenario"):
         task(scenarios=())
+
+
+def test_closed_loop_chooses_the_imm_when_it_wins_on_held_out_seeds(tmp_path):
+    evaluator = FakeEvaluator(imm_rmse=15.0)
+    outcome = Orchestrator(RuleBook(), RunLog("r1"), Skills(evaluate=evaluator)).run(task(), rounds=5)
+    learned = outcome.rules.tracker_for("reference")
+    assert learned.motion_model == "imm"
+    accepted = [lesson for lesson in outcome.lessons if lesson.accepted]
+    assert accepted[0].tracker == TrackerConfig(motion_model="imm")
+    # Loaded back, the rule book keeps the choice.
+    path = tmp_path / "rules.json"
+    outcome.rules.save(path)
+    assert RuleBook.load(path).tracker_for("reference").motion_model == "imm"
+
+
+def test_closed_loop_keeps_constant_velocity_when_the_imm_loses():
+    outcome = Orchestrator(RuleBook(), RunLog("r1"), Skills(evaluate=FakeEvaluator())).run(task(), rounds=5)
+    assert outcome.rules.tracker_for("reference").motion_model == "cv"
+    imm_lessons = [lesson for lesson in outcome.lessons if lesson.tracker and lesson.tracker.motion_model == "imm"]
+    assert len(imm_lessons) == 1 and not imm_lessons[0].accepted  # tried once, remembered, not retried
 
 
 def test_closed_loop_improves_and_converges(tmp_path):

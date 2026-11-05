@@ -165,7 +165,11 @@ class StepContext:
 
 
 def describe_tracker(t: TrackerConfig) -> str:
-    return f"q={t.process_noise_m2_s3:.4g} gate={t.gate_probability:.4g} coast={t.max_coast_s:.4g}s"
+    common = f"gate={t.gate_probability:.4g} coast={t.max_coast_s:.4g}s"
+    if t.motion_model == "imm":
+        return (f"imm q_cv={t.imm_straight_process_noise_m2_s3:.4g} q_ct={t.imm_turn_process_noise_m2_s3:.4g} "
+                + common)
+    return f"q={t.process_noise_m2_s3:.4g} " + common
 
 
 class ResearchAgent:
