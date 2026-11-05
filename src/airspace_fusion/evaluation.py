@@ -155,6 +155,36 @@ def run_single(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> S
     return SingleRun(sim, measurements, invalid, modes)
 
 
+# After a turn ends, a filter needs a while to settle; those scans count as neither turn nor straight.
+SETTLING_S = 20.0
+# The first scans of a run are track start-up; they count as neither.
+STARTUP_S = 10.0
+
+
+def segment_squared_errors(run: SingleRun, mode: Mode) -> dict[str, list[float]]:
+    """Squared position errors of one mode, split into "turn" scans (between the scenario's turn start and end)
+    and "straight" scans (from STARTUP_S to the turn start, and from SETTLING_S after the turn end).
+
+    Pool lists over seeds and take the root of the mean to get segment RMSEs (the M4 exit criteria).
+    """
+    scenario, truth = run.simulation.scenario, run.simulation.truth
+    t0 = truth.timestamps[0]
+    segments: dict[str, list[float]] = {"turn": [], "straight": []}
+    for k, estimate in enumerate(run.modes[mode].result.estimates):
+        if estimate.state is None:
+            continue
+        t = (estimate.timestamp - t0).total_seconds()
+        if scenario.turn_start_s <= t < scenario.turn_end_s:
+            segment = "turn"
+        elif STARTUP_S <= t < scenario.turn_start_s or t >= scenario.turn_end_s + SETTLING_S:
+            segment = "straight"
+        else:
+            continue
+        dx, dy = estimate.state[0] - truth.positions_m[k, 0], estimate.state[2] - truth.positions_m[k, 1]
+        segments[segment].append(float(dx * dx + dy * dy))
+    return segments
+
+
 class Verdict(str, Enum):
     IMPROVES = "fusion improves"
     WORSENS = "fusion worsens"

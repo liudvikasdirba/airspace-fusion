@@ -104,6 +104,13 @@ List every scenario and family, including those from scenario files, or print on
 .venv/Scripts/python -m airspace_fusion.cli scenarios --toml crossing_geometry
 ```
 
+`run`, `compare` and `sweep` take `--motion-model imm` to track with the IMM instead of the constant-velocity filter
+(see [Turns: the IMM tracker](#turns-the-imm-tracker)):
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli compare --seeds 20 --motion-model imm
+```
+
 Sweep one family parameter: the paired comparison at each value, over the same seeds (values as a list, or
 `lo:hi:n` for n evenly spaced values; `--csv` also writes the table for plotting):
 
@@ -296,7 +303,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 
 **Tracker behaviour**
 
-- **Motion model:** nearly constant velocity, with process noise 0.5 m²/s³ per axis. The turn is model mismatch that the process noise must absorb.
+- **Motion model:** nearly constant velocity by default, with process noise 0.5 m²/s³ per axis; the turn is model mismatch that the process noise must absorb. With `motion_model = "imm"` an interacting multiple model filter mixes constant velocity with coordinated turns at ±3°/s ([ADR 0011](docs/adr/0011-imm-tracker.md)); estimates then also carry each model's probability.
 - **Each scan:**
   - predict to the scan time
   - for each sensor and measurement type, gate the observations with a chi-square test at 99.7 %
@@ -412,10 +419,49 @@ Reproduce it (writes a CSV and a results file that `reproduce` can check):
 .venv/Scripts/python -m airspace_fusion.cli sweep --scenario crossing_geometry --parameter crossing_angle_deg --values 5,15,30,45,60,75,90 --seeds 100 --csv crossing.csv
 ```
 
+### Turns: the IMM tracker
+
+The default tracker assumes nearly constant velocity, so the 90° turn in every scenario is noise to it, and
+during the turn it is over-confident. The **IMM** (interacting multiple model) tracker runs three models side by
+side (straight flight, a 3°/s left turn and a 3°/s right turn) and weights them every scan by how well each
+predicted the measurement ([ADR 0011](docs/adr/0011-imm-tracker.md)). It is opt-in: `--motion-model imm`, or
+`motion_model = "imm"` in `TrackerConfig`.
+
+`reference`, baseline (position sensor only), 60 seeds. "Turn" is 60–100 s; "straight" excludes the first 10 s
+and the 20 s after the turn:
+
+| | Turn RMSE | Straight RMSE | 95 % containment |
+|---|---|---|---|
+| Constant velocity | 22.9 m | 15.8 m | 0.93 |
+| IMM | **16.9 m** | **13.8 m** | **0.96** |
+
+Across the built-in scenarios (40 seeds), the IMM lowers baseline RMSE by 9 % (`noisy_primary`) to 16 % and brings
+baseline containment to 0.95–0.96; every verdict stays the same. The exception is fusion in `biased_bearing`: the
+IMM's tighter straight model trusts the biased bearings more, fusion RMSE rises from 37.0 to 40.7 m and fusion
+containment falls from 0.29 to 0.16.
+
+**Where it helps and where it does not.** Sweep of the turn rate in the `manoeuvre_intensity` family (40 seeds
+per point, baseline):
+
+| Turn rate | RMSE, constant velocity → IMM | 95 % containment, constant velocity → IMM |
+|---|---|---|
+| 0°/s | 16.3 → 14.3 m | 0.98 → 0.98 |
+| 1.5°/s | 18.2 → 17.0 m | 0.94 → 0.95 |
+| 3°/s (the IMM's turn rate) | 25.5 → 15.7 m | 0.83 → 0.96 |
+| 4.5°/s | 36.1 → 28.0 m | 0.77 → 0.77 |
+| 6°/s | 46.0 → 40.6 m | 0.77 → 0.77 |
+
+Up to its own turn rate the IMM fixes both error and over-confidence. Faster turns still get lower error, but
+they stay as over-confident as with the constant-velocity model: one fixed turn rate cannot describe them.
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli sweep --scenario manoeuvre_intensity --parameter turn_rate_deg_s --values 0,1.5,3,4.5,6 --seeds 40 --motion-model imm
+```
+
 ## Limitations
 
 - Single synthetic object, two stationary synthetic sensors, generic 2D frame. No real hardware, terrain or propagation.
-- Nearly-constant-velocity model; the turn is absorbed by process noise (baseline 95 % containment ≈ 0.92, i.e. slightly over-confident).
+- The default nearly-constant-velocity model absorbs the turn as process noise (baseline 95 % containment ≈ 0.93, slightly over-confident). The opt-in IMM fixes this up to its fixed 3°/s turn rate; faster turns remain over-confident.
 - Bearing updates are linearised (EKF). Their value depends strongly on geometry: a distant bearing sensor adds almost nothing.
 - Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
 - Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.

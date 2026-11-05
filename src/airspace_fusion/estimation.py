@@ -162,6 +162,8 @@ class Estimate:
     covariance: np.ndarray | None  # 4x4
     updated_by: tuple[str, ...]  # measurement ids accepted at this timestamp
     updated_sensors: frozenset[str] = frozenset()  # sensors that contributed those measurements
+    # IMM only: each motion model's probability (constant velocity, left turn, right turn); None for "cv".
+    mode_probabilities: tuple[float, ...] | None = None
 
     @property
     def has_track(self) -> bool:
@@ -413,6 +415,9 @@ class SingleTargetTracker:
                         covariance=None if track is None else track.covar,
                         updated_by=tuple(m.measurement_id for m in accepted),
                         updated_sensors=frozenset(m.sensor_id for m in accepted),
+                        mode_probabilities=(
+                            tuple(track.probabilities.tolist()) if isinstance(track, IMMState) else None
+                        ),
                     )
                 )
 
@@ -458,6 +463,137 @@ class SingleTargetTracker:
         if update_nis is not None:
             update_nis[chosen.measurement_id] = chosen_nis
         return posterior, [chosen]
+
+
+@dataclass(frozen=True)
+class IMMState(TrackState):
+    """An IMM track. ``mean`` and ``covar`` are the combined (moment-matched) estimate, which gating, selection,
+    initiation and the metrics use; ``models`` and ``probabilities`` are each motion model's state and weight."""
+
+    models: tuple[TrackState, ...] = ()
+    probabilities: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
+
+def _combine(states: Sequence[TrackState], weights: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Moment-matched mean and covariance of a Gaussian mixture."""
+    mean = sum((w * s.mean for w, s in zip(weights, states)), np.zeros(4))
+    covar = np.zeros((4, 4))
+    for w, s in zip(weights, states):
+        d = s.mean - mean
+        covar = covar + w * (s.covar + np.outer(d, d))
+    return mean, (covar + covar.T) / 2
+
+
+def _log_det(covar_inverse: np.ndarray) -> float:
+    """log det S, from S^-1 (1x1 or 2x2)."""
+    if covar_inverse.shape == (1, 1):
+        return -math.log(covar_inverse[0, 0])
+    (a, b), (c, d) = covar_inverse
+    return -math.log(a * d - b * c)
+
+
+class IMMTracker(SingleTargetTracker):
+    """Interacting multiple model tracker (ADR 0011): constant velocity plus coordinated turns at +/- a fixed rate.
+
+    All three models share the state ``[x, vx, y, vy]``; with a known turn rate each one is a linear Kalman filter.
+    Each scan the models' estimates are mixed by a Markov switching matrix, predicted with their own dynamics,
+    updated with the measurement chosen by gating on the combined prediction, and re-weighted by how likely each
+    model made that measurement. Gating, nearest-neighbour selection, initiation and track drop are inherited.
+    """
+
+    def __init__(self, config: TrackerConfig) -> None:
+        super().__init__(config)
+        omega = math.radians(config.imm_turn_rate_deg_s)
+        self.turn_rates = (0.0, omega, -omega)  # constant velocity, left turn, right turn
+        n = len(self.turn_rates)
+        stay = config.imm_stay_probability
+        # transition[i, j]: probability of switching from model i to model j between scans.
+        self.transition = np.full((n, n), (1.0 - stay) / (n - 1))
+        np.fill_diagonal(self.transition, stay)
+        # A new track is assumed to fly straight; the turn models start with the switching probability.
+        self.initial_probabilities = self.transition[0].copy()
+        self._model_transitions: dict[tuple[int, float], tuple[np.ndarray, np.ndarray]] = {}
+
+    def _model_transition(self, model: int, dt: float) -> tuple[np.ndarray, np.ndarray]:
+        """F and Q of one model over ``dt`` seconds; cached, since scans are regular."""
+        cached = self._model_transitions.get((model, dt))
+        if cached is None:
+            omega = self.turn_rates[model]
+            config = self.config
+            q = config.imm_straight_process_noise_m2_s3 if omega == 0.0 else config.imm_turn_process_noise_m2_s3
+            adt = abs(dt)
+            q1 = np.array([[adt**3 / 3, adt**2 / 2], [adt**2 / 2, adt]]) * q
+            noise = np.zeros((4, 4))
+            noise[:2, :2] = noise[2:, 2:] = q1
+            if omega == 0.0:
+                f = np.array([[1.0, dt, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, dt], [0.0, 0.0, 0.0, 1.0]])
+            else:  # coordinated turn: the velocity vector rotates by omega * dt
+                s, c = math.sin(omega * dt), math.cos(omega * dt)
+                f = np.array([
+                    [1.0, s / omega, 0.0, -(1.0 - c) / omega],
+                    [0.0, c, 0.0, -s],
+                    [0.0, (1.0 - c) / omega, 1.0, s / omega],
+                    [0.0, s, 0.0, c],
+                ])
+            cached = self._model_transitions[(model, dt)] = (f, noise)
+        return cached
+
+    def _initiate(
+        self, previous: Sequence[Measurement], current: Sequence[Measurement]
+    ) -> tuple[TrackState, Measurement, Measurement] | None:
+        started = super()._initiate(previous, current)
+        if started is None:
+            return None
+        state, a, b = started
+        return self._as_imm(state), a, b  # report mode probabilities from the first scan of a track
+
+    def _as_imm(self, state: TrackState) -> IMMState:
+        if isinstance(state, IMMState):
+            return state
+        models = tuple(TrackState(state.mean, state.covar, state.timestamp) for _ in self.turn_rates)
+        return IMMState(state.mean, state.covar, state.timestamp, models, self.initial_probabilities)
+
+    def _predict(self, state: TrackState, t: datetime) -> TrackState:
+        imm = self._as_imm(state)
+        if imm.timestamp == t:
+            return imm
+        dt = (t - imm.timestamp).total_seconds()
+        predicted_probabilities = self.transition.T @ imm.probabilities  # c_j = sum_i T_ij mu_i
+        mixing = self.transition * imm.probabilities[:, None] / predicted_probabilities[None, :]  # w_ij = mu_i|j
+        models = []
+        for j in range(len(self.turn_rates)):
+            mean, covar = _combine(imm.models, mixing[:, j])
+            f, noise = self._model_transition(j, dt)
+            models.append(TrackState(f @ mean, f @ covar @ f.T + noise, t))
+        mean, covar = _combine(models, predicted_probabilities)
+        return IMMState(mean, covar, t, tuple(models), predicted_probabilities)
+
+    def _update(self, prior: TrackState, m: Measurement, innovation: object) -> TrackState:
+        """Update every model with ``m`` and re-weight the models by its likelihood (in log space)."""
+        imm = self._as_imm(prior)
+        models, log_weights = [], []
+        for model, probability in zip(imm.models, imm.probabilities):
+            model_innovation = self._innovation(model, m)
+            models.append(super()._update(model, m, model_innovation))
+            dim = model_innovation.vector.size
+            log_likelihood = -0.5 * (model_innovation.nis + dim * math.log(2 * math.pi)
+                                     + _log_det(model_innovation.covar_inverse))
+            log_weights.append(math.log(probability) + log_likelihood if probability > 0.0 else -math.inf)
+        top = max(log_weights)
+        if not math.isfinite(top):
+            raise FloatingPointError(f"no IMM model can explain measurement {m.measurement_id}")
+        weights = np.exp(np.array(log_weights) - top)
+        probabilities = weights / weights.sum()
+        mean, covar = _combine(models, probabilities)
+        return IMMState(mean, covar, m.timestamp_utc, tuple(models), probabilities)
+
+    def _check_state(self, state: TrackState) -> None:  # type: ignore[override]
+        super()._check_state(state)
+        if isinstance(state, IMMState):
+            for model in state.models:
+                super()._check_state(model)
+            if not (np.all(state.probabilities >= 0.0) and abs(float(state.probabilities.sum()) - 1.0) < 1e-9):
+                raise FloatingPointError("IMM model probabilities are not a probability distribution")
 
 
 def _group_by_sensor_and_type(scan: list[Measurement]) -> list[list[Measurement]]:
@@ -546,4 +682,5 @@ def run_tracker(
     """Run the tracker on the measurements from ``sensor_ids`` (all sensors if None)."""
     allowed = None if sensor_ids is None else set(sensor_ids)
     selected = [m for m in measurements if allowed is None or m.sensor_id in allowed]
-    return SingleTargetTracker(config).run(selected, report_times)
+    tracker = IMMTracker(config) if config.motion_model == "imm" else SingleTargetTracker(config)
+    return tracker.run(selected, report_times)
