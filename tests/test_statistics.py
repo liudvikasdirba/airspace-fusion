@@ -14,7 +14,13 @@ import pytest
 from helpers import matched_scenario, matched_tracker
 from scipy import stats
 
-from airspace_fusion.config import SCENARIOS, TrackerConfig, default_primary, default_secondary
+from airspace_fusion.config import (
+    SCENARIOS,
+    HealthMonitorConfig,
+    TrackerConfig,
+    default_primary,
+    default_secondary,
+)
 from airspace_fusion.estimation import Disposition
 from airspace_fusion.evaluation import Mode, Verdict, compare_modes, run_single
 
@@ -219,3 +225,86 @@ def test_m4_exit_criteria_on_reference():
     assert cv_containment < 0.95 - 0.01  # the constant-velocity filter is over-confident through the turn
     assert imm_turn < cv_turn, (imm_turn, cv_turn)
     assert imm_straight <= 1.05 * cv_straight, (imm_straight, cv_straight)
+
+
+# -- M5: sensor health monitor (ADR 0012) ----------------------------------------------------------------------------
+
+# The defaults were tuned on seeds 0-299, and block 10000-10199 was used once and retired (ADR 0012). No setting was
+# chosen from these two blocks. Both are used because the gain criterion differs between them by more than its margin.
+M5_SEEDS = [*range(20_000, 20_200), *range(40_000, 40_200)]
+M5_WORKERS = 4
+UNBIASED = ("reference", "noisy_primary", "distant_bearing")
+
+
+@pytest.fixture(scope="module", params=["cv", "imm"])
+def m5(request):
+    """Every number the M5 exit criteria need, for one motion model."""
+    from airspace_fusion.evaluation import compare_modes, health_summary, seed_executor
+
+    plain = TrackerConfig(motion_model=request.param)
+    monitored = plain.model_copy(update={"health_monitor": HealthMonitorConfig()})
+    with seed_executor(M5_WORKERS, len(M5_SEEDS)) as executor:
+        health = {name: health_summary(SCENARIOS[name], monitored, M5_SEEDS, executor) for name in SCENARIOS}
+        on = {n: compare_modes(SCENARIOS[n], monitored, M5_SEEDS, executor) for n in ("reference", "biased_bearing")}
+        off = compare_modes(SCENARIOS["reference"], plain, M5_SEEDS, executor)
+    # Shown with `pytest -s`, so that the measured values are visible whether or not the criteria are met.
+    print(f"\nM5 [{request.param}] " + " ".join(f"{n}: alarms {s.runs_with_false_alarm}/{s.runs}"
+                                                 for n, s in health.items())
+          + f" delay {health['biased_bearing'].median_delay_s} detected {health['biased_bearing'].detected_runs}"
+          + f" biased change {on['biased_bearing'].rmse_relative_change:+.4f}"
+          + f" biased containment {on['biased_bearing'].mean_containment()[Mode.FUSION]:.3f}"
+          + f" reference rmse off {off.metrics[Mode.FUSION]['position_rmse_m'].mean:.3f}"
+          + f" on {on['reference'].metrics[Mode.FUSION]['position_rmse_m'].mean:.3f}"
+          + f" base {off.metrics[Mode.BASELINE]['position_rmse_m'].mean:.3f}")
+    return request.param, health, on, off
+
+
+def test_m5_detects_a_1_5_degree_bias_within_30_s(m5):
+    """Exit: median delay at most 30 s. Measured: 11 s for both motion models; every run detected."""
+    model, health, _, _ = m5
+    s = health["biased_bearing"]
+    assert s.median_delay_s <= 30.0, (model, s)
+    assert s.detection_rate >= 0.99, (model, s)
+
+
+def test_m5_false_alarms_on_unbiased_scenarios(m5):
+    """Exit: false alarms in at most 1 % of runs. An alarm is any departure from trusted, including to suspect.
+
+    Pooled over the three unbiased scenarios, and bounded per scenario at 2 %, since one scenario's runs resolve
+    1 % only coarsely. `noisy_primary` is the hardest: a 75 m position sensor gives the bearings a
+    poor reference.
+    """
+    model, health, _, _ = m5
+    runs = sum(health[n].runs for n in UNBIASED)
+    alarms = sum(health[n].runs_with_false_alarm for n in UNBIASED)
+    per_scenario = {n: health[n].runs_with_false_alarm for n in UNBIASED}
+    assert alarms / runs <= 0.01, (model, alarms, runs, per_scenario)
+    assert max(per_scenario.values()) <= 0.02 * len(M5_SEEDS), (model, per_scenario)
+
+
+def test_m5_biased_fusion_is_within_5_percent_of_the_baseline(m5):
+    """Exit: in `biased_bearing`, fusion with the monitor is at most 5 % worse than the baseline.
+
+    Measured: +0.9 % with constant velocity, +1.4 % with the IMM. Without the monitor, on the development
+    seeds: +99 % and +154 %.
+    """
+    model, _, on, _ = m5
+    summary = on["biased_bearing"]
+    assert summary.rmse_relative_change <= 0.05, (model, summary.rmse_relative_change)
+    containment = summary.mean_containment()
+    assert containment[Mode.FUSION] >= 0.85, (model, containment)  # not merely accurate: honest about it, too
+
+
+def test_m5_reference_keeps_90_percent_of_the_fusion_gain(m5):
+    """Exit: in `reference`, at least 90 % of the gain of fusion without the monitor is kept.
+
+    Over the 400 seeds: 0.926 with constant velocity and 0.906 with the IMM, whose 95 % bootstrap interval
+    [0.875, 0.930] includes values below 0.90. On one block of 200 the IMM was 0.887, on the other 0.926 (ADR 0012).
+    """
+    model, _, on, off = m5
+    baseline = off.metrics[Mode.BASELINE]["position_rmse_m"].mean
+    gain_without = baseline - off.metrics[Mode.FUSION]["position_rmse_m"].mean
+    gain_with = baseline - on["reference"].metrics[Mode.FUSION]["position_rmse_m"].mean
+    assert gain_without > 0.0, model
+    kept = gain_with / gain_without
+    assert kept >= 0.90, (model, kept, gain_with, gain_without)

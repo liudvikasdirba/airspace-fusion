@@ -14,7 +14,7 @@ from typing import NoReturn
 
 from airspace_fusion import __version__
 from airspace_fusion.agents import LearningTask, Orchestrator, Skills, describe_tracker
-from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, TrackerConfig
+from airspace_fusion.config import DEFAULT_SCENARIO, SCENARIOS, HealthMonitorConfig, TrackerConfig
 from airspace_fusion.evaluation import (
     DEFAULT_SEEDS,
     METRIC_NAMES,
@@ -24,8 +24,11 @@ from airspace_fusion.evaluation import (
     SweepPoint,
     compare_modes,
     explain_verdict,
+    health_roc,
+    health_summary,
     run_single,
     seed_executor,
+    sensor_health_metrics,
     sweep,
     with_holm,
 )
@@ -121,6 +124,10 @@ def _run(args: argparse.Namespace) -> None:
     for name in METRIC_NAMES:
         values = [getattr(run.modes[m].metrics, name) for m in Mode]
         print(f"{name:<24}" + "".join(f"{v:>14.4g}" for v in values))
+    for sensor in sensor_health_metrics(run).values():
+        print(f"health {sensor.sensor_id}: biased={sensor.biased} detection_delay_s={sensor.detection_delay_s:.0f} "
+              f"false_alarms={sensor.false_alarms} time_excluded_s={sensor.time_excluded_s:.0f} "
+              f"held_alarms={sensor.held_alarms}")
 
 
 MOTION_MODEL_HELP = (
@@ -130,11 +137,14 @@ MOTION_MODEL_HELP = (
 
 
 def _tracker(args: argparse.Namespace, base: TrackerConfig | None = None) -> TrackerConfig:
-    """Default (or rule-book) tracker settings, with --motion-model applied when given."""
+    """Default (or rule-book) tracker settings, with --motion-model and --health-monitor applied when given."""
     tracker = base or TrackerConfig()
-    if args.motion_model is None:
-        return tracker
-    return TrackerConfig.model_validate(tracker.model_dump() | {"motion_model": args.motion_model})
+    update: dict[str, object] = {}
+    if args.motion_model is not None:
+        update["motion_model"] = args.motion_model
+    if args.health_monitor:
+        update["health_monitor"] = HealthMonitorConfig()
+    return TrackerConfig.model_validate(tracker.model_dump() | update) if update else tracker
 
 
 def _usage_error(args: argparse.Namespace, message: str) -> NoReturn:
@@ -315,6 +325,63 @@ def _reproduce(args: argparse.Namespace) -> int:
     return 0
 
 
+def _monitored_tracker(args: argparse.Namespace) -> TrackerConfig:
+    args.health_monitor = True  # these commands are about the monitor, so it is always on
+    return _tracker(args)
+
+
+def _health(args: argparse.Namespace) -> None:
+    sources = _selected(args)
+    seeds = list(range(args.first_seed, args.first_seed + args.seeds))
+    tracker = _monitored_tracker(args)
+    print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}), motion model {tracker.motion_model}\n")
+    print(f"{'scenario':<20}{'false-alarm runs':>18}{'detected':>12}{'median delay':>14}{'time excluded':>15}")
+    with seed_executor(args.workers, len(seeds)) as executor:
+        for source in sources:
+            s = health_summary(source, tracker, seeds, executor)
+            detected = f"{s.detected_runs}/{s.biased_runs}" if s.biased_runs else "-"
+            delay = f"{s.median_delay_s:.0f} s" if s.detected_runs else "-"
+            print(f"{s.scenario:<20}{f'{s.runs_with_false_alarm}/{s.runs}':>18}{detected:>12}{delay:>14}"
+                  f"{f'{s.mean_time_excluded_s:.0f} s':>15}")
+
+
+ROC_CSV_COLUMNS = ("threshold_scale", "false_alarm_rate", "bias_deg", "detection_rate", "median_delay_s", "seeds")
+ROC_BIASES_DEG = (0.5, 1.0, 1.5, 2.0, 3.0)
+ROC_SCALES = (0.4, 0.6, 0.8, 1.0, 1.25, 1.5, 2.0)
+
+
+def _roc(args: argparse.Namespace) -> None:
+    (source,) = _selected(args, groups=False)
+    if not isinstance(source, ScenarioFamily):
+        _usage_error(args, f"{source.name!r} is a fixed scenario; roc needs a family with a bearing bias")
+    if any(scale <= 0.0 for scale in args.scales):
+        _usage_error(args, "--scales must all be greater than 0")
+    seeds = list(range(args.first_seed, args.first_seed + args.seeds))
+    tracker = _monitored_tracker(args)
+    print(f"ROC of the health monitor on family {source.name}, seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}), "
+          f"motion model {tracker.motion_model}\ndelay: median s from run start; in brackets the detection rate\n")
+    with seed_executor(args.workers, len(seeds)) as executor:
+        points = health_roc(source, tracker, args.scales, ROC_BIASES_DEG, seeds, executor)
+    print(f"{'scale':>6}{'false alarms':>14}" + "".join(f"{f'{b:g} deg':>14}" for b in ROC_BIASES_DEG))
+    for point in points:
+        cells = [f"{f'{s.median_delay_s:.0f}' if s.detected_runs else '-'} ({s.detection_rate:.2f})"
+                 for s in point.detection.values()]
+        print(f"{point.threshold_scale:>6.2f}{point.false_alarm_rate:>14.3f}" + "".join(f"{c:>14}" for c in cells))
+    if args.csv:
+        args.csv.parent.mkdir(parents=True, exist_ok=True)
+        with args.csv.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=ROC_CSV_COLUMNS)
+            writer.writeheader()
+            for point in points:
+                for bias, s in point.detection.items():
+                    writer.writerow({
+                        "threshold_scale": point.threshold_scale, "false_alarm_rate": point.false_alarm_rate,
+                        "bias_deg": bias, "detection_rate": s.detection_rate, "median_delay_s": s.median_delay_s,
+                        "seeds": s.runs,
+                    })
+        print(f"\nCSV written to {args.csv}")
+
+
 def _non_negative_int(text: str) -> int:
     value = int(text)
     if value < 0:
@@ -434,6 +501,23 @@ def main(argv: list[str] | None = None) -> int:
     rep_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
     rep_p.set_defaults(func=_reproduce, parser=rep_p)
 
+    health_p = sub.add_parser("health", help="how the sensor health monitor behaves over many seeds (ADR 0012)")
+    health_p.add_argument("--scenario", default="all", help=SCENARIO_HELP)
+    health_p.add_argument("--seeds", type=_positive_int, default=DEFAULT_SEEDS)
+    health_p.add_argument("--first-seed", type=int, default=0)
+    health_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
+    health_p.set_defaults(func=_health, parser=health_p)
+
+    roc_p = sub.add_parser("roc", help="health monitor detection delay against false-alarm rate, from a family")
+    roc_p.add_argument("--scenario", default="bias_magnitude", help="a family with a bearing bias")
+    roc_p.add_argument("--seeds", type=_positive_int, default=DEFAULT_SEEDS)
+    roc_p.add_argument("--first-seed", type=int, default=0)
+    roc_p.add_argument("--scales", type=_sweep_values, default=list(ROC_SCALES),
+                       help="multipliers of the CUSUM alarm limits (comma-separated, or lo:hi:n)")
+    roc_p.add_argument("--csv", type=Path, metavar="PATH", help="also write the table as CSV")
+    roc_p.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help=WORKERS_HELP)
+    roc_p.set_defaults(func=_roc, parser=roc_p)
+
     for subparser in (cmp_p, swp_p):
         subparser.add_argument("--results-dir", type=Path, metavar="PATH",
                                help=f"where to save the results file (default: ${RESULTS_DIR_ENV} or "
@@ -444,10 +528,14 @@ def main(argv: list[str] | None = None) -> int:
     scn_p.add_argument("--toml", metavar="NAME", help="print this scenario or family as a scenario file")
     scn_p.set_defaults(func=_scenarios, parser=scn_p)
 
-    for subparser in (run_p, cmp_p, swp_p):
+    for subparser in (run_p, cmp_p, swp_p, health_p, roc_p):
         subparser.add_argument("--motion-model", choices=("cv", "imm"), help=MOTION_MODEL_HELP)
 
-    for subparser in (run_p, cmp_p, swp_p, learn_p, scn_p):
+    for subparser in (run_p, cmp_p, swp_p):
+        subparser.add_argument("--health-monitor", action="store_true",
+                               help="test each sensor's innovations and stop trusting inconsistent ones (ADR 0012)")
+
+    for subparser in (run_p, cmp_p, swp_p, learn_p, scn_p, health_p, roc_p):
         subparser.add_argument("--scenario-file", type=Path, action="append", metavar="PATH",
                                help="TOML file with extra [[scenario]] and [[family]] entries (repeatable)")
 

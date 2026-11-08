@@ -111,6 +111,8 @@ List every scenario and family, including those from scenario files, or print on
 .venv/Scripts/python -m airspace_fusion.cli compare --seeds 20 --motion-model imm
 ```
 
+`run`, `compare` and `sweep` also take `--health-monitor` (see [Sensor health monitor](#sensor-health-monitor)).
+
 Sweep one family parameter: the paired comparison at each value, over the same seeds (values as a list, or
 `lo:hi:n` for n evenly spaced values; `--csv` also writes the table for plotting):
 
@@ -301,6 +303,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
 | `simulator.py` | Deterministic truth and sensor records from a seed. Ground truth and truth-side labels (false and corrupted record ids) are kept apart from the emitted records. |
 | `estimation.py` | Single-target tracker: Kalman/extended Kalman filter in plain NumPy (Joseph-form update; the bearing model uses an exact analytic Jacobian). Receives only validated measurements and the scan schedule, never ground truth. |
 | `estimation_stonesoup.py` | The same tracker with the filter steps done by Stone Soup, kept as a cross-check: tests require both to give the same results ([ADR 0007](docs/adr/0007-numpy-tracker-stone-soup-cross-check.md)). |
+| `health.py` | Opt-in sensor health monitor: tests each sensor's normalised innovations and keeps its state ([ADR 0012](docs/adr/0012-sensor-health-monitor.md)). Imports nothing but `config`. |
 | `evaluation.py` | Runs both modes on the same simulation, computes metrics against truth, aggregates seeds and gives a paired verdict. |
 | `learning.py` | Learning loop: score, gaps, lessons, the bounded rule book (JSON) and the JSONL run log. |
 | `agents.py` | Orchestrator and the research, experiment, QA and content agents that run the learning plan. |
@@ -315,7 +318,7 @@ simulate -> sensor records -> schema validation -> tracker (baseline, fusion) ->
   - apply the in-gate observation with the smallest normalised innovation
   - positions are applied before bearings
 - **Bearing updates** constrain only the direction across the bearing sensor's line of sight. A bearing is rejected as degenerate geometry when the predicted object is within 3σ of the bearing sensor.
-- **Track start:** two position observations on consecutive scans implying at most 60 m/s. Bearings never start a track.
+- **Track start:** two position observations on consecutive scans implying at most 60 m/s. Bearings never start a track. With the health monitor on, an excluded position sensor cannot start one either, as long as another position sensor is usable.
 - **Track drop:** after 8 s without an accepted **position** update. Bearings refine a track but cannot keep it alive, since they carry no range.
 - **Unsupported types:** `RANGE_BEARING` and `DETECTION_ONLY` are valid in the schema but are explicitly rejected by the tracker, never reinterpreted.
 
@@ -463,12 +466,73 @@ they stay as over-confident as with the constant-velocity model: one fixed turn 
 .venv/Scripts/python -m airspace_fusion.cli sweep --scenario manoeuvre_intensity --parameter turn_rate_deg_s --values 0,1.5,3,4.5,6 --seeds 40 --motion-model imm
 ```
 
+### Sensor health monitor
+
+Fusion can now notice, without ground truth, that a sensor is hurting it. The opt-in monitor
+([ADR 0012](docs/adr/0012-sensor-health-monitor.md)) tests each sensor's normalised innovations with a windowed
+chi-square test and a CUSUM. A sensor is **trusted**, **suspect** (down-weighted) or **excluded** (ignored until its
+innovations are consistent again). A position sensor with no usable alternative is always trusted, because only position
+updates keep a track alive. An alternative counts only if it is not excluded and has reported within the last 4 s, half
+the coast limit. Bearing sensors are tested for the first few scans of each track before they are used.
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli compare --scenario biased_bearing --health-monitor
+```
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli health --motion-model imm
+```
+
+```bash
+.venv/Scripts/python -m airspace_fusion.cli roc --csv roc.csv
+```
+
+Measured on 400 seeds per scenario (20000–20199 and 40000–40199), none of which chose a setting. An alarm is any
+departure from trusted.
+
+| Exit criterion | Constant velocity | IMM |
+|---|---|---|
+| Median delay for a 1.5° bias, at most 30 s | 11 s, 400/400 detected | 11 s, 400/400 detected |
+| False alarms in at most 1 % of unbiased runs | 3 of 1,200 | 1 of 1,200 |
+| `biased_bearing`, at most 5 % worse than the baseline | +0.9 % | +1.4 % |
+| `reference`, at least 90 % of the fusion gain kept | 92.6 % | 90.6 % |
+
+All four are met, but the last one only narrowly with the IMM: its 95 % bootstrap interval is 87.5–93.0 %, and the two
+blocks of 200 seeds alone give 88.7 % and 92.6 %. With constant velocity the interval is 90.1–94.6 %, and the blocks
+give 90.6 % and 94.5 %. So 400 seeds do not settle whether the IMM's true value is above 90 %.
+
+Without the monitor, fusion in `biased_bearing` is +99 % (constant velocity) and +154 % (IMM) against the baseline.
+The cost is the gain lost in healthy worlds: bearings are not used during the first scans of every track.
+
+Detection delay against false-alarm rate, from the `bias_magnitude` family (100 seeds, 30000–30099). `scale` multiplies
+both CUSUM limits, so 1.00 is the default. Cells are the median delay in seconds, with the detection rate in brackets.
+
+| Constant velocity: scale | False-alarm rate | 0.5° | 1° | 1.5° | 2° | 3° |
+|---|---|---|---|---|---|---|
+| 0.50 | 0.11 | 76 (0.74) | 12 (1.00) | 8 (1.00) | 7 (1.00) | 7 (1.00) |
+| 0.75 | 0.02 | 101 (0.47) | 17 (1.00) | 10 (1.00) | 8 (1.00) | 7 (1.00) |
+| 1.00 | 0.00 | 103 (0.26) | 22 (1.00) | 13 (1.00) | 10 (1.00) | 9 (1.00) |
+| 1.50 | 0.00 | 121 (0.09) | 38 (0.99) | 18 (1.00) | 14 (1.00) | 12 (1.00) |
+| 2.00 | 0.00 | 162 (0.05) | 63 (0.96) | 22 (1.00) | 17 (1.00) | 15 (1.00) |
+
+| IMM: scale | False-alarm rate | 0.5° | 1° | 1.5° | 2° | 3° |
+|---|---|---|---|---|---|---|
+| 0.50 | 0.06 | 78 (0.74) | 12 (1.00) | 8 (1.00) | 7 (1.00) | 7 (1.00) |
+| 0.75 | 0.01 | 106 (0.43) | 17 (1.00) | 10 (1.00) | 8 (1.00) | 7 (1.00) |
+| 1.00 | 0.00 | 121 (0.29) | 23 (1.00) | 13 (1.00) | 10 (1.00) | 9 (1.00) |
+| 1.50 | 0.00 | 136 (0.06) | 38 (1.00) | 18 (1.00) | 14 (1.00) | 12 (1.00) |
+| 2.00 | 0.00 | 164 (0.02) | 68 (0.96) | 22 (1.00) | 17 (1.00) | 15 (1.00) |
+
+Below about 1° the monitor mostly stays quiet: a 0.5° bias raises an alarm in about a quarter of the runs at the
+default thresholds. A biased position sensor is blamed on the bearing sensor, which is then excluded, so fusion falls
+back to the baseline's error even when the bearing was helping.
+
 ## Limitations
 
 - Single synthetic object, two stationary synthetic sensors, generic 2D frame. No real hardware, terrain or propagation.
 - The default nearly-constant-velocity model absorbs the turn as process noise (baseline 95 % containment ≈ 0.93, slightly over-confident). The opt-in IMM fixes this up to its fixed 3°/s turn rate; faster turns remain over-confident.
 - Bearing updates are linearised (EKF). Their value depends strongly on geometry: a distant bearing sensor adds almost nothing.
-- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this, although it shows up as bearing NIS well above 1.
+- Errors are assumed zero-mean, white and independent between sensors and over time. An unmodelled bias or correlated error makes fusion over-confident and **worse** than the baseline. The filter cannot correct this. The opt-in [sensor health monitor](#sensor-health-monitor) can stop trusting a biased bearing sensor, but it does not attribute a biased position sensor and misses small biases.
 - Association is chi-square gating plus nearest-in-gate selection for one object. False observations inside the gate can still be accepted (about 1 % of accepted bearings at 5 false observations per scan). Two-point initiation can occasionally start on two aligned false observations before the real track. There is no multi-object association or ambiguity resolution.
 - RMSE is evaluated only where a track exists; GOSPA covers every scan, but its cut-off (150 m) is a choice.
 - Process noise and gate settings are shared by both modes. The [Results](#results-200-seeds-0199-compare) use the untuned defaults; `learn` can tune them per scenario (see [Learning loop](#learning-loop)).
@@ -487,7 +551,7 @@ Fast suite (about 20 s). It includes:
 .venv/Scripts/python -m pytest
 ```
 
-Slow suite (about 1 min): Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep, headless dashboard tests, performance budgets, and a cross-process reproducibility check.
+Slow suite (about 7 min, most of it the sensor health monitor's 400-seed exit criteria): Monte Carlo filter-consistency and statistical-behaviour checks, the edge-settings sweep, headless dashboard tests, performance budgets, and a cross-process reproducibility check.
 
 ```bash
 .venv/Scripts/python -m pytest -m slow

@@ -45,7 +45,14 @@ from statistics import NormalDist
 import numpy as np
 
 from airspace_fusion.config import TrackerConfig
-from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
+from airspace_fusion.health import HealthMonitor, HealthReport, SensorHealth
+from airspace_fusion.schemas import (
+    AngularUncertainty,
+    CovarianceUncertainty,
+    Measurement,
+    MeasurementType,
+    wrap_angle,
+)
 
 POSITION_INDICES = (0, 2)
 POSITION_SLICE = slice(0, None, 2)  # the same indices; slicing is much cheaper than np.ix_
@@ -97,6 +104,16 @@ class Innovation:
     @property
     def nis(self) -> float:
         return float(self.vector @ self.covar_inverse @ self.vector)
+
+    def normalised(self) -> tuple[float, ...]:
+        """The innovation whitened by S: independent standard normal components if the filter's model is right."""
+        (nu, *rest) = self.vector.tolist()
+        if not rest:
+            return (nu * math.sqrt(float(self.covar_inverse[0, 0])),)
+        (a, b), (_, d) = self.covar_inverse.tolist()  # S^-1 = L L^T, and L^T nu has identity covariance
+        l11 = math.sqrt(a)
+        l21 = b / l11
+        return (l11 * nu + l21 * rest[0], math.sqrt(d - l21 * l21) * rest[0])
 
 
 def small_inverse(s: np.ndarray) -> np.ndarray:
@@ -151,7 +168,10 @@ class Disposition:
     UNSUPPORTED_TYPE = "rejected_unsupported_type"
     DEGENERATE_GEOMETRY = "rejected_degenerate_geometry"
     NO_TRACK = "unused_no_track"
+    SENSOR_EXCLUDED = "rejected_sensor_excluded"  # the health monitor is ignoring this sensor or has it on probation
 
+    # What the tracker itself rejected. SENSOR_EXCLUDED is left out, so that this count compares across runs with and
+    # without the health monitor (ADR 0012).
     REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY)
 
 
@@ -193,6 +213,7 @@ class TrackerResult:
     duplicate_count: int = 0  # records whose measurement_id was already seen; not processed
     # Normalised innovation squared of each accepted update, for filter consistency checks.
     update_nis: dict[str, float] = field(default_factory=dict)
+    health: HealthReport | None = None  # what the sensor health monitor did; None when it is off
 
     @property
     def disposition_counts(self) -> Counter[str]:
@@ -368,6 +389,11 @@ class SingleTargetTracker:
         previous_positions: list[Measurement] = []
         initiations = 0
         estimates: list[Estimate] = []
+        # Half the coast limit, so that a remaining position sensor is reinstated before the track would be dropped.
+        monitor = (
+            None if self.config.health_monitor is None
+            else HealthMonitor(self.config.health_monitor, self.config.max_coast_s / 2.0)
+        )
 
         for t in sorted(set(by_time) | report_set):
             scan = sorted(
@@ -376,6 +402,10 @@ class SingleTargetTracker:
             )
             positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
             accepted: list[Measurement] = []
+            held_out = (
+                set() if monitor is None else monitor.not_for_initiation(t, [m.sensor_id for m in positions])
+            )
+            starters = [m for m in positions if m.sensor_id not in held_out]
 
             if (
                 track is not None
@@ -387,15 +417,20 @@ class SingleTargetTracker:
             if track is not None:
                 state = track
                 for group in _group_by_sensor_and_type(scan):
-                    state, used = self._update_with_sensor(state, group, t, dispositions, update_nis)
+                    state, used = self._update_with_sensor(state, group, t, dispositions, update_nis, monitor)
                     accepted.extend(used)
                 track = self._predict(state, t)
                 if any(m.measurement_type is MeasurementType.POSITION_2D for m in accepted):
                     last_position_update = t
             else:
-                started_track = self._initiate(previous_positions, positions)
+                for m in positions:
+                    if m.sensor_id in held_out:
+                        dispositions[m.measurement_id] = Disposition.SENSOR_EXCLUDED
+                started_track = self._initiate(previous_positions, starters)
                 if started_track is not None:
                     track, a, b = started_track
+                    if monitor is not None:
+                        monitor.start_new_track()
                     dispositions[a.measurement_id] = Disposition.INITIATION
                     dispositions[b.measurement_id] = Disposition.INITIATION
                     accepted.append(b)
@@ -405,7 +440,7 @@ class SingleTargetTracker:
             # Only scans that contain positions replace the initiation history, so other
             # sensors' observations cannot change how (or when) a track is started.
             if positions:
-                previous_positions = positions
+                previous_positions = starters
 
             if t in report_set:
                 estimates.append(
@@ -428,6 +463,7 @@ class SingleTargetTracker:
             processing_time_s=time.perf_counter() - started,
             duplicate_count=duplicates,
             update_nis=update_nis,
+            health=None if monitor is None else monitor.report(),
         )
 
     def _update_with_sensor(
@@ -437,32 +473,77 @@ class SingleTargetTracker:
         t: datetime,
         dispositions: dict[str, str],
         update_nis: dict[str, float] | None = None,
+        monitor: HealthMonitor | None = None,
     ) -> tuple[TrackState, list[Measurement]]:
         """Gate one sensor's measurements of one type and apply the nearest in-gate one."""
         prior = self._predict(state, t)
         threshold = self.gate_thresholds[len(group[0].measurement_value)]
         candidates: list[tuple[float, Measurement, object]] = []
+        nearest: tuple[float, Measurement, object] | None = None
         for m in group:
             if m.measurement_type is MeasurementType.BEARING_ONLY and not self._bearing_geometry_ok(prior, m):
                 dispositions[m.measurement_id] = Disposition.DEGENERATE_GEOMETRY
                 continue
             nis, payload = self._nis(prior, m)
+            if nearest is None or nis < nearest[0]:
+                nearest = (nis, m, payload)
             if nis > threshold:
                 dispositions[m.measurement_id] = Disposition.OUTSIDE_GATE
             else:
                 candidates.append((nis, m, payload))
+        health = SensorHealth.TRUSTED
+        if monitor is not None and nearest is not None:
+            health = self._monitor_nearest(monitor, nearest, threshold, t)
+            if health is SensorHealth.EXCLUDED:
+                for _, m, _ in candidates:
+                    dispositions[m.measurement_id] = Disposition.SENSOR_EXCLUDED
+                return prior, []
         if not candidates:
             return prior, []
         candidates.sort(key=lambda c: (c[0], c[1].measurement_id))
         chosen_nis, chosen, payload = candidates[0]
         for _, m, _ in candidates[1:]:
             dispositions[m.measurement_id] = Disposition.NOT_SELECTED
-        posterior = self._update(prior, chosen, payload)
+        if health is SensorHealth.SUSPECT:
+            assert self.config.health_monitor is not None
+            weighted = down_weighted(chosen, self.config.health_monitor.suspect_noise_scale)
+            posterior = self._update(prior, weighted, self._nis(prior, weighted)[1])
+        else:
+            posterior = self._update(prior, chosen, payload)
         self._check_state(posterior)
         dispositions[chosen.measurement_id] = Disposition.ACCEPTED
         if update_nis is not None:
             update_nis[chosen.measurement_id] = chosen_nis
         return posterior, [chosen]
+
+    @staticmethod
+    def _monitor_nearest(
+        monitor: HealthMonitor, nearest: tuple[float, Measurement, object], gate: float, t: datetime
+    ) -> SensorHealth:
+        """Give the monitor the normalised innovation of the sensor's nearest measurement, capped at the gate."""
+        nis, m, payload = nearest
+        assert isinstance(payload, Innovation)
+        sample = payload.normalised()
+        if nis > gate:
+            scale = math.sqrt(gate / nis)
+            sample = tuple(v * scale for v in sample)
+        return monitor.observe(t, m.sensor_id, sample, m.measurement_type is MeasurementType.POSITION_2D)
+
+
+def down_weighted(m: Measurement, variance_scale: float) -> Measurement:
+    """``m`` with its measurement variance multiplied by ``variance_scale``."""
+    uncertainty = m.measurement_uncertainty
+    if isinstance(uncertainty, AngularUncertainty):
+        scaled: AngularUncertainty | CovarianceUncertainty = uncertainty.model_copy(
+            update={"std_rad": uncertainty.std_rad * math.sqrt(variance_scale)}
+        )
+    elif isinstance(uncertainty, CovarianceUncertainty):
+        scaled = uncertainty.model_copy(
+            update={"matrix": tuple(tuple(v * variance_scale for v in row) for row in uncertainty.matrix)}
+        )
+    else:
+        raise ValueError(f"measurement {m.measurement_id} has no usable uncertainty")
+    return m.model_copy(update={"measurement_uncertainty": scaled})
 
 
 @dataclass(frozen=True)
