@@ -19,8 +19,8 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
-| M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes are under Unreleased and ship in 0.6.0, because results files change format. |
-| M4 Manoeuvres | **Started early** (5 November): the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model are done, and all three exit criteria are met. The factory default stays constant velocity (decided 5 November); release pending. |
+| M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes shipped in 0.6.0, because results files change format. |
+| M4 Manoeuvres | **Done** 8 November, over two months ahead of the 18 – 31 January window: the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model. All exit criteria met. The factory default stays constant velocity (decided 5 November). Released as **0.6.0** on 8 November, together with the review fixes to 0.5.0. |
 | M5 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
 
 ## Where the project stands
@@ -271,8 +271,7 @@ improve and `distant_bearing` shows no material change (200 seeds, Holm-correcte
 ### Review after the release (4 November 2026)
 
 A code review of `v0.4.0..v0.5.0` found four correctness problems and five cleanups. All were fixed the same day
-in pull request 18 and are listed under Unreleased in the changelog; they ship with 0.6.0, because results files
-move to format 3.
+in pull request 18 and shipped with 0.6.0, because results files move to format 3.
 
 - **Over-confident rule.** Fusion containment below 0.85 counted as "fusion over-confident" even when the
   baseline was calibrated worse, so `learn` could switch off a fusion filter that was better on both accuracy
@@ -295,7 +294,7 @@ The exit criteria above still hold after the fixes.
 
 **Goal:** remove the motion-model mismatch so that containment problems come from sensors, not from the turn.
 
-Status: started early, on 5 November 2026. All deliverables and exit criteria are done.
+Status: **done on 8 November 2026**, over two months ahead of its window. Released as 0.6.0 on 8 November.
 
 Deliverables:
 - [x] An interacting multiple model (IMM) tracker with constant-velocity and coordinated-turn models, in the NumPy
