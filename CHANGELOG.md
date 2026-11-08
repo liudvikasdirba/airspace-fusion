@@ -8,6 +8,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
+M4 finished: an opt-in IMM tracker that models the turn, and a learning loop that chooses the motion model per
+scenario. The factory default stays constant velocity, so published results and the golden file do not change.
+Also ships the fixes from the code review of 0.5.0; results files move to format 3, so re-run older ones.
+
 ### Added
 
 - IMM tracker (`motion_model = "imm"`, `--motion-model imm` on `run`, `compare` and `sweep`): constant velocity
