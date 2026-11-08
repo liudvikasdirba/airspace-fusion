@@ -589,8 +589,9 @@ def health_summary(
 
 def scaled_thresholds(monitor: HealthMonitorConfig, scale: float) -> HealthMonitorConfig:
     """``monitor`` with both CUSUM alarm limits multiplied by ``scale``: one operating point of a ROC curve."""
-    return monitor.model_copy(
-        update={"suspect_cusum": monitor.suspect_cusum * scale, "exclude_cusum": monitor.exclude_cusum * scale}
+    return HealthMonitorConfig.model_validate(
+        monitor.model_dump()
+        | {"suspect_cusum": monitor.suspect_cusum * scale, "exclude_cusum": monitor.exclude_cusum * scale}
     )
 
 

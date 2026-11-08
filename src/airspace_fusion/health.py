@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -46,7 +47,7 @@ def chi2_upper_quantile(tail_probability: float, dof: int) -> float:
         raise ValueError(f"tail probability must lie strictly between 0 and 1, got {tail_probability}")
     if dof < 1:
         raise ValueError(f"degrees of freedom must be at least 1, got {dof}")
-    z = NormalDist().inv_cdf(1.0 - tail_probability)
+    z = -NormalDist().inv_cdf(tail_probability)  # 1 - p would round to 1 for the smallest allowed tails
     term = 2.0 / (9.0 * dof)
     return float(dof * (1.0 - term + z * math.sqrt(term)) ** 3)
 
@@ -75,6 +76,10 @@ class HealthReport:
         return tuple(t for t in self.transitions if t.sensor_id == sensor_id)
 
 
+def _worst(states: Iterable[SensorHealth]) -> SensorHealth:
+    return max(states, key=tuple(SensorHealth).index, default=SensorHealth.TRUSTED)
+
+
 class SensorMonitor:
     """The windowed chi-square test, CUSUM and state machine of one sensor."""
 
@@ -85,6 +90,7 @@ class SensorMonitor:
         self.state = SensorHealth.TRUSTED
         self.held_alarms = 0  # samples at which a test fired on a sensor the monitor may not act on
         self.samples = 0
+        self.samples_on_track = 0  # since the current track started
         self.samples_in_state = 0
         self.on_probation = config.probation_samples > 0  # only tested, not yet used; see ``_end_probation_if_due``
         window_dof = config.window_samples * dof
@@ -92,6 +98,8 @@ class SensorMonitor:
         self.exclude_sum = chi2_upper_quantile(config.exclude_window_probability, window_dof)
         self.consistent_sum = chi2_upper_quantile(config.consistent_window_probability, window_dof)
         self._window: deque[tuple[float, ...]] = deque(maxlen=config.window_samples)
+        self._window_sum = 0.0
+        self._was_protected = False
         self._high = [0.0] * dof  # CUSUM of positive shifts, per component
         self._low = [0.0] * dof  # CUSUM of negative shifts, per component
 
@@ -102,12 +110,14 @@ class SensorMonitor:
     @property
     def window_sum(self) -> float:
         """Sum of squares of the samples in the window."""
-        return sum(v * v for sample in self._window for v in sample)
+        return self._window_sum
 
     def _push(self, sample: tuple[float, ...]) -> None:
         self.samples += 1
+        self.samples_on_track += 1
         self.samples_in_state += 1
         self._window.append(sample)
+        self._window_sum = sum(v * v for s in self._window for v in s)
         drift = self.config.cusum_drift
         for i, value in enumerate(sample):
             self._high[i] = max(0.0, self._high[i] + value - drift)
@@ -132,6 +142,18 @@ class SensorMonitor:
         self._high = [0.0] * self.dof
         self._low = [0.0] * self.dof
 
+    def _clear_tests(self) -> None:
+        self._reset_cusum()
+        self._window.clear()
+        self._window_sum = 0.0
+
+    def start_new_track(self) -> None:
+        """Samples against the previous track say nothing about this one, and its state holds no bias yet."""
+        self._clear_tests()
+        self.samples_on_track = 0
+        self.on_probation = self.config.probation_samples > 0
+        self._was_protected = False
+
     def _shifted(self) -> bool:
         """Some component's window mean is further from zero than ``consistent_mean_sigmas`` standard errors."""
         limit = self.config.consistent_mean_sigmas * math.sqrt(len(self._window))
@@ -140,20 +162,27 @@ class SensorMonitor:
     def _end_probation_if_due(self) -> None:
         """Probation ends after ``probation_samples`` unless the samples look shifted, and after a full window anyway:
         a bias too small for the alarms must not keep a sensor out without anything being reported."""
-        if self.samples >= self.config.window_samples or (
-            self.samples >= self.config.probation_samples and not self._shifted()
+        if self.samples_on_track >= self.config.window_samples or (
+            self.samples_on_track >= self.config.probation_samples and not self._shifted()
         ):
             self.on_probation = False
 
     def observe(self, sample: tuple[float, ...], protected: bool) -> tuple[SensorHealth, str] | None:
-        """Add one normalised innovation. Returns the new state and the reason, if the state changed."""
+        """Add one normalised innovation. Returns the new state and the reason, if the state changed.
+
+        A protected sensor is the track's only source of position updates, so it is trusted whatever its state was.
+        What it accumulates meanwhile is counted but dropped when protection ends: the monitor could not act on it.
+        """
+        if self._was_protected and not protected:
+            self._clear_tests()
+        self._was_protected = protected
         self._push(sample)
         if self.on_probation:
             self._end_probation_if_due()
         if protected:
             self.held_alarms += self._fired(self.config.suspect_cusum, self.suspect_sum) is not None
-            return None
-        if self.samples < self.config.min_samples:
+            return None if self.state is SensorHealth.TRUSTED else self._enter(SensorHealth.TRUSTED, "protected")
+        if self.samples_on_track < self.config.min_samples:
             return None
         config = self.config
         new: SensorHealth | None = None
@@ -175,56 +204,92 @@ class SensorMonitor:
             return None
         if reason == "consistent":
             self._reset_cusum()  # the alarm is over: start accumulating afresh
-        self.state = new
+        return self._enter(new, reason)
+
+    def _enter(self, state: SensorHealth, reason: str) -> tuple[SensorHealth, str]:
+        self.state = state
         self.samples_in_state = 0
-        return new, reason
+        return state, reason
 
 
 class HealthMonitor:
-    """One ``SensorMonitor`` per sensor, plus the rule that protects the track (ADR 0012).
+    """One ``SensorMonitor`` per sensor and measurement kind, plus the rules that protect the track (ADR 0012).
 
     Only position updates keep a track alive (ADR 0004), and the position sensors are the reference the others are
     judged against. So the last usable position sensor is protected: it is still tested, and its alarms are counted,
-    but it stays trusted. Other sensors start on probation: until ``probation_samples`` have raised no alarm they are
-    tested against the track but do not update it.
+    but it is trusted. A position sensor not heard for ``max_position_silence_s`` no longer counts as usable; the
+    tracker keeps this below its coast limit, so a remaining sensor is reinstated before the track is dropped.
+    Other sensors start each track on probation: tested against the track, but not used to update it.
     """
 
-    def __init__(self, config: HealthMonitorConfig) -> None:
+    def __init__(self, config: HealthMonitorConfig, max_position_silence_s: float) -> None:
         self.config = config
-        self.monitors: dict[str, SensorMonitor] = {}
-        self.position_sensors: set[str] = set()
+        self.max_position_silence_s = max_position_silence_s
+        self.monitors: dict[tuple[str, bool], SensorMonitor] = {}  # by (sensor_id, is_position)
+        self.position_last_heard: dict[str, datetime] = {}
         self.transitions: list[HealthTransition] = []
 
     def state(self, sensor_id: str) -> SensorHealth:
-        monitor = self.monitors.get(sensor_id)
+        """The sensor's worst state, if it reports more than one kind of measurement."""
+        return _worst(m.state for (s, _), m in self.monitors.items() if s == sensor_id)
+
+    def _position_state(self, sensor_id: str) -> SensorHealth:
+        monitor = self.monitors.get((sensor_id, True))
         return SensorHealth.TRUSTED if monitor is None else monitor.state
 
-    def _protected(self, sensor_id: str, is_position: bool) -> bool:
-        if not is_position:
-            return False
-        return not any(s != sensor_id and self.state(s) is not SensorHealth.EXCLUDED for s in self.position_sensors)
+    def _protected(self, sensor_id: str, timestamp: datetime) -> bool:
+        """No other position sensor is both usable and recently heard."""
+        return not any(
+            other != sensor_id
+            and (timestamp - heard).total_seconds() <= self.max_position_silence_s
+            and self._position_state(other) is not SensorHealth.EXCLUDED
+            for other, heard in self.position_last_heard.items()
+        )
+
+    def not_for_initiation(self, timestamp: datetime, position_sensors: Iterable[str]) -> set[str]:
+        """Of the sensors with positions in this scan, those that may not start a track: excluded, with an alternative.
+
+        Without a track no innovations are tested, so the last position sensor must be able to start one.
+        """
+        reporting = set(position_sensors)
+        for sensor_id in reporting:
+            self.position_last_heard[sensor_id] = timestamp
+        return {
+            s for s in reporting
+            if self._position_state(s) is SensorHealth.EXCLUDED and not self._protected(s, timestamp)
+        }
+
+    def start_new_track(self) -> None:
+        for monitor in self.monitors.values():
+            monitor.start_new_track()
 
     def observe(
         self, timestamp: datetime, sensor_id: str, sample: tuple[float, ...], is_position: bool
     ) -> SensorHealth:
-        """Test one normalised innovation and return the sensor's state for this scan."""
-        monitor = self.monitors.get(sensor_id)
+        """Test one normalised innovation and return how to treat the sensor's measurement in this scan."""
+        key = (sensor_id, is_position)
+        monitor = self.monitors.get(key)
         if monitor is None:
-            monitor = self.monitors[sensor_id] = SensorMonitor(sensor_id, self.config, len(sample))
+            monitor = self.monitors[key] = SensorMonitor(sensor_id, self.config, len(sample))
         if is_position:
-            self.position_sensors.add(sensor_id)
+            self.position_last_heard[sensor_id] = timestamp
         previous = monitor.state
-        changed = monitor.observe(sample, self._protected(sensor_id, is_position))
+        changed = monitor.observe(sample, is_position and self._protected(sensor_id, timestamp))
         if changed is not None:
             self.transitions.append(HealthTransition(timestamp, sensor_id, previous, *changed))
-        if not is_position and monitor.on_probation and monitor.state is SensorHealth.TRUSTED:
-            return SensorHealth.EXCLUDED  # tested, but not yet used
+        if not is_position and monitor.on_probation:
+            return SensorHealth.EXCLUDED  # tested, but not yet used, even if it has already raised an alarm
         return monitor.state
 
     def report(self) -> HealthReport:
+        samples: dict[str, int] = {}
+        held_alarms: dict[str, int] = {}
+        for (sensor_id, _), m in self.monitors.items():
+            samples[sensor_id] = samples.get(sensor_id, 0) + m.samples
+            held_alarms[sensor_id] = held_alarms.get(sensor_id, 0) + m.held_alarms
         return HealthReport(
             transitions=tuple(self.transitions),
-            samples={sensor_id: m.samples for sensor_id, m in self.monitors.items()},
-            final_states={sensor_id: m.state for sensor_id, m in self.monitors.items()},
-            held_alarms={sensor_id: m.held_alarms for sensor_id, m in self.monitors.items()},
+            samples=samples,
+            final_states={sensor_id: self.state(sensor_id) for sensor_id in samples},
+            held_alarms=held_alarms,
         )

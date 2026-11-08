@@ -14,14 +14,14 @@ commitment. Review it at every release and update the dates and the `updated` fi
 
 Finished deliverables and exit criteria are ticked below, with a note where the result differs from the plan.
 
-| Milestone | Status (4 November 2026) |
+| Milestone | Status (8 November 2026) |
 |---|---|
 | M0 Ship what exists | **Done.** 0.2.0 released and tagged on 1 November, ahead of the 2 – 8 November window. |
 | M1 Fast and parallel | **Done** 2 November and released as **0.3.0**, ahead of the 9 – 29 November window. Speed targets revised to what pure Python and NumPy reach (one run under 60 ms, measured about 51 ms; 1,000 seeds under 110 s, measured about 99 s); see the M1 decision. |
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes shipped in 0.6.0, because results files change format. |
 | M4 Manoeuvres | **Done** 8 November, over two months ahead of the 18 – 31 January window: the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model. All exit criteria met. The factory default stays constant velocity (decided 5 November). Released as **0.6.0** on 8 November, together with the review fixes to 0.5.0. |
-| M5 Sensor health monitor | **Built** 8 November, opt-in, not yet released: the monitor, its three states, the metrics and ROC curves, ADR 0012. Three of the four exit criteria are met with both motion models. The fourth, keeping 90 % of the fusion gain in `reference`, is met with constant velocity (90.6 %) and **not met** with the IMM (88.7 %); see [M5](#m5--sensor-health-monitor-070-1--21-feb-2027). |
+| M5 Sensor health monitor | **Built** 8 November, opt-in, not yet released: the monitor, its three states, the metrics and ROC curves, ADR 0012. All four exit criteria are met with both motion models over 400 seeds. Keeping 90 % of the fusion gain in `reference` is met only narrowly with the IMM (90.6 %, 95 % interval 87.5–93.0 %); see [M5](#m5--sensor-health-monitor-070-1--21-feb-2027). |
 | M6 – M8 | Not started. |
 
 ## Where the project stands
@@ -335,33 +335,52 @@ a learned turn rate can follow later.
 **Goal:** fusion detects, without ground truth, that a sensor is hurting it, and stops trusting it.
 
 Deliverables:
-- A monitor per sensor that tests normalised innovations over a sliding window (windowed chi-square test and
+- [x] A monitor per sensor that tests normalised innovations over a sliding window (windowed chi-square test and
   a CUSUM), using only data the tracker sees.
-- Three states per sensor: trusted, suspect (measurements down-weighted), excluded (ignored until its
+- [x] Three states per sensor: trusted, suspect (measurements down-weighted), excluded (ignored until its
   innovations are consistent again).
-- A new metric set: detection delay, false alarms per run, time spent excluded.
-- ROC curves (detection delay against false-alarm rate) from the `bias_magnitude` family.
-- A module dependency rule so that the monitor cannot import the simulator or evaluation.
-- [ADR 0012](adr/0012-sensor-health-monitor.md): sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md). (Planned as ADR 0011, a number the IMM tracker took.)
+- [x] A new metric set: detection delay, false alarms per run, time spent excluded.
+- [x] ROC curves (detection delay against false-alarm rate) from the `bias_magnitude` family.
+  *The `roc` command; the tables are in the README.*
+- [x] A module dependency rule so that the monitor cannot import the simulator or evaluation.
+- [x] [ADR 0012](adr/0012-sensor-health-monitor.md): sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md). (Planned as ADR 0011, a number the IMM tracker took.)
 
 Exit criteria:
-- 1.5° bearing bias detected with a median delay of 30 s or less.
-- False alarms on unbiased scenarios in at most 1 % of runs.
-- In `biased_bearing`, fusion with the monitor is no more than 5 % worse than the baseline (today 97 % worse).
-- In `reference`, at least 90 % of today's fusion gain is kept.
+- [x] 1.5° bearing bias detected with a median delay of 30 s or less.
+- [x] False alarms on unbiased scenarios in at most 1 % of runs.
+- [x] In `biased_bearing`, fusion with the monitor is no more than 5 % worse than the baseline (today 97 % worse).
+- [x] In `reference`, at least 90 % of today's fusion gain is kept. *Narrowly with the IMM; see below.*
 
-Status (8 November 2026): built and opt-in. The criteria predate the IMM, so both motion models were measured, on
-200 seeds per scenario (20000–20199) that played no part in tuning:
+Status (8 November 2026): built and opt-in, not yet released. The criteria predate the IMM, so both motion models were
+measured, on 400 seeds per scenario (20000–20199 and 40000–40199), none of which chose a setting:
 
 | Criterion | Constant velocity | IMM |
 |---|---|---|
 | Median delay for a 1.5° bias, at most 30 s | 11 s | 11 s |
-| False alarms in at most 1 % of unbiased runs | 2 of 600 | 1 of 600 |
-| `biased_bearing`, at most 5 % worse than the baseline | +1.2 % | +1.9 % |
-| `reference`, at least 90 % of the fusion gain kept | 90.6 % | **88.7 %, not met** |
+| False alarms in at most 1 % of unbiased runs | 3 of 1,200 | 1 of 1,200 |
+| `biased_bearing`, at most 5 % worse than the baseline | +0.9 % | +1.4 % |
+| `reference`, at least 90 % of the fusion gain kept | 92.6 % | 90.6 % |
 
-An earlier held-out block missed a different criterion and was retired; [ADR 0012](adr/0012-sensor-health-monitor.md)
-gives the history and the limits, including that a biased position sensor is not attributed.
+The IMM's gain criterion is not settled by these seeds: its 95 % interval is 87.5–93.0 %, and the two blocks alone give
+88.7 % and 92.6 %. [ADR 0012](adr/0012-sensor-health-monitor.md) gives the history and the limits, including that a
+biased position sensor is not attributed.
+
+### Review before the release (8 November 2026)
+
+A code review of the monitor found ten problems, all fixed before merging. In the monitor and tracker:
+
+- A position sensor that had stopped reporting still counted as an alternative, so the only live one could be excluded.
+- A sensor that raised an alarm during probation was used, down-weighted, while a quiet one was held out.
+- An excluded position sensor could start a new track.
+- A sensor reporting both positions and bearings crashed the monitor.
+- Alarms piled up under protection could exclude a sensor the moment protection ended, and a suspect sensor that became
+  protected could never recover.
+- Test state and probation carried over from one track to the next.
+
+Also fixed: monitor exclusions no longer count in `rejected_observations`, `roc` refuses a scale that is not positive, a
+tail probability below about 1e-16 no longer crashes, and the window sum is computed once per sample. Re-running the old
+block with the fixes gave the same gain in `reference`, so the higher figures above come from adding seeds, not from
+the fixes.
 
 ## M6 — Bias estimation (0.8.0, 22 Feb – 7 Mar 2027)
 
@@ -391,7 +410,7 @@ Deliverables:
   scenario name. Rule book format 2, with a clear error when a format 1 file is loaded.
 - Leave-one-family-out evaluation: train on all families but one, test on the one left out.
 - The agents keep their deterministic design and their logs, lessons and bounds.
-- ADR 0012: context-keyed learning. It supersedes [ADR 0005](adr/0005-deterministic-learning-agents.md) in part;
+- ADR 0013: context-keyed learning. It supersedes [ADR 0005](adr/0005-deterministic-learning-agents.md) in part;
   determinism and held-out acceptance carry over.
 
 Exit criteria: on held-out families the learned policy beats the defaults on at least two thirds of families

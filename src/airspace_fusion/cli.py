@@ -354,6 +354,8 @@ def _roc(args: argparse.Namespace) -> None:
     (source,) = _selected(args, groups=False)
     if not isinstance(source, ScenarioFamily):
         _usage_error(args, f"{source.name!r} is a fixed scenario; roc needs a family with a bearing bias")
+    if any(scale <= 0.0 for scale in args.scales):
+        _usage_error(args, "--scales must all be greater than 0")
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
     tracker = _monitored_tracker(args)
     print(f"ROC of the health monitor on family {source.name}, seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}), "

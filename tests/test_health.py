@@ -12,7 +12,7 @@ from scipy import stats
 
 from airspace_fusion.cli import main
 from airspace_fusion.config import SCENARIOS, HealthMonitorConfig, TrackerConfig, default_primary
-from airspace_fusion.estimation import Disposition, Innovation, down_weighted
+from airspace_fusion.estimation import Disposition, Innovation, down_weighted, run_tracker
 from airspace_fusion.estimation_stonesoup import StoneSoupTracker
 from airspace_fusion.evaluation import (
     Mode,
@@ -39,6 +39,7 @@ T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 MONITOR = HealthMonitorConfig()
 NO_PROBATION = HealthMonitorConfig(probation_samples=0)
 MONITORED = TrackerConfig(health_monitor=MONITOR)
+SILENCE_S = 4.0
 
 
 def feed(monitor: SensorMonitor, samples, protected: bool = False) -> list[SensorHealth]:
@@ -53,6 +54,10 @@ def feed(monitor: SensorMonitor, samples, protected: bool = False) -> list[Senso
 @pytest.mark.parametrize("tail", [1e-2, 1e-4, 1e-6])
 def test_chi2_upper_quantile_is_close_to_exact(dof, tail):
     assert chi2_upper_quantile(tail, dof) == pytest.approx(stats.chi2.isf(tail, dof), rel=0.02)
+
+
+def test_chi2_upper_quantile_handles_the_smallest_tails():
+    assert chi2_upper_quantile(1e-17, 20) > chi2_upper_quantile(1e-10, 20)
 
 
 def test_chi2_upper_quantile_rejects_bad_arguments():
@@ -120,11 +125,11 @@ def test_a_protected_sensor_stays_trusted_and_its_alarms_are_counted():
 
 def test_the_last_position_sensor_is_protected_but_a_second_one_is_not():
     bad = (3.0, 3.0)
-    alone = HealthMonitor(NO_PROBATION)
+    alone = HealthMonitor(NO_PROBATION, SILENCE_S)
     for k in range(40):
         assert alone.observe(T0 + timedelta(seconds=k), "p1", bad, True) is SensorHealth.TRUSTED
 
-    pair = HealthMonitor(NO_PROBATION)
+    pair = HealthMonitor(NO_PROBATION, SILENCE_S)
     for k in range(40):
         t = T0 + timedelta(seconds=k)
         pair.observe(t, "p1", bad, True)
@@ -136,7 +141,7 @@ def test_the_last_position_sensor_is_protected_but_a_second_one_is_not():
 
 
 def test_probation_tests_a_sensor_before_it_is_used():
-    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3))
+    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3), SILENCE_S)
     states = [monitor.observe(T0 + timedelta(seconds=k), "b", (0.1,), False) for k in range(5)]
     assert states[:2] == [SensorHealth.EXCLUDED, SensorHealth.EXCLUDED]
     assert states[3:] == [SensorHealth.TRUSTED, SensorHealth.TRUSTED]
@@ -146,11 +151,90 @@ def test_probation_tests_a_sensor_before_it_is_used():
 def test_probation_continues_while_the_samples_look_shifted_but_not_past_one_window():
     # A shift too small to raise an alarm must not keep the sensor out for ever without anything being reported.
     config = HealthMonitorConfig(probation_samples=3, window_samples=20)
-    monitor = HealthMonitor(config)
+    monitor = HealthMonitor(config, SILENCE_S)
     states = [monitor.observe(T0 + timedelta(seconds=k), "b", (1.2,), False) for k in range(21)]
     assert states[10] is SensorHealth.EXCLUDED
     assert states[20] is SensorHealth.TRUSTED
     assert monitor.report().transitions == ()
+
+
+def at_second(k: int) -> datetime:
+    return T0 + timedelta(seconds=k)
+
+
+def test_a_position_sensor_gone_silent_does_not_count_as_an_alternative():
+    bad, good = (3.0, 3.0), (0.1, -0.1)
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(5):  # p1 reports for a while, then falls silent
+        monitor.observe(at_second(k), "p1", good, True)
+        monitor.observe(at_second(k), "p2", good, True)
+    states = [monitor.observe(at_second(k), "p2", bad, True) for k in range(5, 60)]
+    assert states[-1] is SensorHealth.TRUSTED
+    assert monitor.report().held_alarms["p2"] > 0
+
+
+def test_an_excluded_position_sensor_is_reinstated_when_the_other_falls_silent():
+    bad, good = (3.0, 3.0), (0.1, -0.1)
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(40):
+        monitor.observe(at_second(k), "p1", bad, True)
+        monitor.observe(at_second(k), "p2", good, True)
+    assert monitor.state("p1") is SensorHealth.EXCLUDED
+    states = [monitor.observe(at_second(k), "p1", bad, True) for k in range(40, 46)]
+    assert states[:3] == [SensorHealth.EXCLUDED] * 3  # p2 might only have missed a scan or two
+    assert states[-1] is SensorHealth.TRUSTED
+    assert monitor.transitions[-1].reason == "protected"
+
+
+def test_a_sensor_that_alarms_during_probation_is_still_not_used():
+    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3), SILENCE_S)
+    states = [monitor.observe(at_second(k), "b", (3.0,), False) for k in range(20)]
+    assert set(states) == {SensorHealth.EXCLUDED}
+    assert [t.state for t in monitor.transitions] == [SensorHealth.SUSPECT, SensorHealth.EXCLUDED]
+
+
+def test_a_sensor_with_positions_and_bearings_gets_a_monitor_for_each():
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(30):
+        monitor.observe(at_second(k), "both", (0.1,), False)
+        monitor.observe(at_second(k), "both", (0.1, -0.1), True)
+    assert monitor.report().samples == {"both": 60}
+    assert monitor.report().final_states == {"both": SensorHealth.TRUSTED}
+
+
+def test_what_piled_up_under_protection_cannot_exclude_the_sensor_when_it_ends():
+    monitor = SensorMonitor("s", NO_PROBATION, 1)
+    feed(monitor, [3.0] * 40, protected=True)
+    assert monitor.cusum >= NO_PROBATION.exclude_cusum
+    assert feed(monitor, [0.5]) == [SensorHealth.TRUSTED]
+    assert monitor.cusum == 0.0
+
+
+def test_a_suspect_sensor_that_becomes_protected_is_trusted_again():
+    monitor = SensorMonitor("s", NO_PROBATION, 1)
+    assert feed(monitor, [3.0] * 7)[-1] is SensorHealth.SUSPECT
+    assert monitor.observe((3.0,), protected=True) == (SensorHealth.TRUSTED, "protected")
+
+
+def test_a_new_track_clears_the_tests_and_restarts_probation():
+    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3), SILENCE_S)
+    for k in range(20):
+        monitor.observe(at_second(k), "b", (0.1,), False)
+    assert monitor.observe(at_second(20), "b", (0.1,), False) is SensorHealth.TRUSTED
+    monitor.start_new_track()
+    channel = monitor.monitors["b", False]
+    assert (channel.window_sum, channel.cusum, channel.samples_on_track) == (0.0, 0.0, 0)
+    assert monitor.observe(at_second(21), "b", (0.1,), False) is SensorHealth.EXCLUDED
+
+
+def test_an_excluded_position_sensor_cannot_start_a_track_while_another_can():
+    bad, good = (3.0, 3.0), (0.1, -0.1)
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(40):
+        monitor.observe(at_second(k), "p1", bad, True)
+        monitor.observe(at_second(k), "p2", good, True)
+    assert monitor.not_for_initiation(at_second(40), ["p1", "p2"]) == {"p1"}
+    assert monitor.not_for_initiation(at_second(60), ["p1"]) == set()  # p2 is gone: p1 is all there is
 
 
 def test_normalised_innovation_has_identity_covariance_and_keeps_the_nis():
@@ -201,6 +285,31 @@ def test_biased_bearing_is_excluded_and_the_track_survives_on_positions(motion_m
     assert Disposition.SENSOR_EXCLUDED in fusion.result.dispositions.values()
     assert fusion.metrics.coverage == baseline.metrics.coverage
     assert fusion.metrics.position_rmse_m < 1.25 * baseline.metrics.position_rmse_m
+
+
+def test_tracker_keeps_held_out_position_sensors_from_starting_a_track(monkeypatch):
+    sim = simulate(SCENARIOS["reference"], 0)
+    measurements, _ = parse_records(sim.records)
+    primary = SCENARIOS["reference"].primary.sensor_id
+    monkeypatch.setattr(HealthMonitor, "not_for_initiation", lambda self, t, sensors: {primary} & set(sensors))
+    result = run_tracker(measurements, sim.report_times, MONITORED)
+    assert result.track_initiations == 0
+    assert Disposition.SENSOR_EXCLUDED in result.dispositions.values()
+
+
+def test_tracker_tells_the_monitor_about_each_new_track(monkeypatch):
+    calls = []
+    monkeypatch.setattr(HealthMonitor, "start_new_track", lambda self: calls.append(1))
+    fusion = run_single(SCENARIOS["reference"], MONITORED, 0).modes[Mode.FUSION]
+    assert len(calls) == fusion.result.track_initiations >= 1
+
+
+def test_monitor_exclusions_do_not_count_as_tracker_rejections():
+    assert Disposition.SENSOR_EXCLUDED not in Disposition.REJECTED
+    result = run_single(SCENARIOS["biased_bearing"], MONITORED, 1).modes[Mode.FUSION].result
+    assert result.disposition_counts[Disposition.SENSOR_EXCLUDED] > 0
+    expected = sum(result.disposition_counts[r] for r in Disposition.REJECTED) + result.duplicate_count
+    assert result.rejected_count == expected
 
 
 def test_monitor_off_produces_no_report():
@@ -303,6 +412,11 @@ def test_scaled_thresholds_scale_only_the_cusum_limits():
     assert scaled.window_samples == MONITOR.window_samples
 
 
+def test_scaled_thresholds_reject_a_scale_that_is_not_positive():
+    with pytest.raises(ValueError):
+        scaled_thresholds(MONITOR, 0.0)
+
+
 def test_roc_has_a_point_per_threshold_and_a_summary_per_bias():
     points = health_roc(FAMILIES["bias_magnitude"], MONITORED, [1.0, 2.0], [1.5, 3.0], range(2))
     assert [p.threshold_scale for p in points] == [1.0, 2.0]
@@ -344,3 +458,8 @@ def test_cli_roc_writes_csv(tmp_path, capsys):
 def test_cli_roc_rejects_a_fixed_scenario():
     with pytest.raises(SystemExit):
         main(["roc", "--scenario", "reference", "--seeds", "1"])
+
+
+def test_cli_roc_rejects_a_scale_that_is_not_positive():
+    with pytest.raises(SystemExit):
+        main(["roc", "--seeds", "1", "--scales", "0,1", "--workers", "1"])

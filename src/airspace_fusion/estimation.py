@@ -168,9 +168,11 @@ class Disposition:
     UNSUPPORTED_TYPE = "rejected_unsupported_type"
     DEGENERATE_GEOMETRY = "rejected_degenerate_geometry"
     NO_TRACK = "unused_no_track"
-    SENSOR_EXCLUDED = "rejected_sensor_excluded"  # the health monitor is ignoring this sensor (ADR 0012)
+    SENSOR_EXCLUDED = "rejected_sensor_excluded"  # the health monitor is ignoring this sensor or has it on probation
 
-    REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY, SENSOR_EXCLUDED)
+    # What the tracker itself rejected. SENSOR_EXCLUDED is left out, so that this count compares across runs with and
+    # without the health monitor (ADR 0012).
+    REJECTED = (OUTSIDE_GATE, NOT_SELECTED, UNSUPPORTED_TYPE, DEGENERATE_GEOMETRY)
 
 
 @dataclass(frozen=True)
@@ -387,7 +389,11 @@ class SingleTargetTracker:
         previous_positions: list[Measurement] = []
         initiations = 0
         estimates: list[Estimate] = []
-        monitor = None if self.config.health_monitor is None else HealthMonitor(self.config.health_monitor)
+        # Half the coast limit, so that a remaining position sensor is reinstated before the track would be dropped.
+        monitor = (
+            None if self.config.health_monitor is None
+            else HealthMonitor(self.config.health_monitor, self.config.max_coast_s / 2.0)
+        )
 
         for t in sorted(set(by_time) | report_set):
             scan = sorted(
@@ -396,6 +402,10 @@ class SingleTargetTracker:
             )
             positions = [m for m in scan if m.measurement_type is MeasurementType.POSITION_2D]
             accepted: list[Measurement] = []
+            held_out = (
+                set() if monitor is None else monitor.not_for_initiation(t, [m.sensor_id for m in positions])
+            )
+            starters = [m for m in positions if m.sensor_id not in held_out]
 
             if (
                 track is not None
@@ -413,9 +423,14 @@ class SingleTargetTracker:
                 if any(m.measurement_type is MeasurementType.POSITION_2D for m in accepted):
                     last_position_update = t
             else:
-                started_track = self._initiate(previous_positions, positions)
+                for m in positions:
+                    if m.sensor_id in held_out:
+                        dispositions[m.measurement_id] = Disposition.SENSOR_EXCLUDED
+                started_track = self._initiate(previous_positions, starters)
                 if started_track is not None:
                     track, a, b = started_track
+                    if monitor is not None:
+                        monitor.start_new_track()
                     dispositions[a.measurement_id] = Disposition.INITIATION
                     dispositions[b.measurement_id] = Disposition.INITIATION
                     accepted.append(b)
@@ -425,7 +440,7 @@ class SingleTargetTracker:
             # Only scans that contain positions replace the initiation history, so other
             # sensors' observations cannot change how (or when) a track is started.
             if positions:
-                previous_positions = positions
+                previous_positions = starters
 
             if t in report_set:
                 estimates.append(

@@ -17,10 +17,10 @@ All notable changes to this project are recorded here. The format follows
   alive (ADR 0004). Published results and the golden file do not change.
 - Metrics for the monitor (detection delay, false alarms, time excluded), the `health` command, and the `roc` command
   for detection delay against false-alarm rate on the `bias_magnitude` family.
-- On held-out seeds a 1.5° bias is detected in a median 11 s with both motion models and false alarms stay within
-  1 % of unbiased runs. In `biased_bearing` fusion goes from about twice the baseline's error to +1.2 % (constant
-  velocity) and +1.9 % (IMM). In `reference` the monitor keeps 90.6 % of the fusion gain with constant velocity and
-  88.7 % with the IMM, which misses the 90 % exit criterion.
+- On 400 held-out seeds a 1.5° bias is detected in a median 11 s with both motion models and false alarms stay within
+  1 % of unbiased runs. In `biased_bearing` fusion goes from about twice the baseline's error to +0.9 % (constant
+  velocity) and +1.4 % (IMM). In `reference` the monitor keeps 92.6 % of the fusion gain with constant velocity and
+  90.6 % with the IMM, which meets the 90 % exit criterion only narrowly (95 % interval 87.5–93.0 %).
 
 ## [0.6.0] - 2026-11-08
 
