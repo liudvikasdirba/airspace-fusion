@@ -131,7 +131,8 @@ def build_record(
         "git_dirty": None if commit is None else bool(_git("status", "--porcelain", "--untracked-files=no")),
         "python": platform.python_version(),
         "argv": list(argv),
-        "tracker": tracker.model_dump(mode="json"),
+        # An unset health monitor is left out, so that its arrival did not change the hash of any existing setting.
+        "tracker": tracker.model_dump(mode="json", exclude_none=True),
         "seeds": list(seeds),
         "entries": [
             {"source": source_to_dict(e.source), "point": e.point, "summary": summary_to_dict(e.summary)}

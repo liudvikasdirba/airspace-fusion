@@ -1,7 +1,7 @@
 ---
 title: Roadmap to April 2027
 status: draft
-updated: 2026-11-04
+updated: 2026-11-08
 ---
 
 # Roadmap to April 2027
@@ -21,7 +21,8 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes shipped in 0.6.0, because results files change format. |
 | M4 Manoeuvres | **Done** 8 November, over two months ahead of the 18 – 31 January window: the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model. All exit criteria met. The factory default stays constant velocity (decided 5 November). Released as **0.6.0** on 8 November, together with the review fixes to 0.5.0. |
-| M5 – M8 | Not started. A display-only rolling NIS chart in the dashboard (2 November) is the visible first step toward the M5 sensor health monitor. |
+| M5 Sensor health monitor | **Built** 8 November, opt-in, not yet released: the monitor, its three states, the metrics and ROC curves, ADR 0012. Three of the four exit criteria are met with both motion models. The fourth, keeping 90 % of the fusion gain in `reference`, is met with constant velocity (90.6 %) and **not met** with the IMM (88.7 %); see [M5](#m5--sensor-health-monitor-070-1--21-feb-2027). |
+| M6 – M8 | Not started. |
 
 ## Where the project stands
 
@@ -60,7 +61,7 @@ Ordered by importance. Each one is addressed by the milestone named in the fourt
 | 4 | The verdict uses RMSE only. In `biased_bearing`, fusion containment drops to 0.28 but the verdict ignores it. RMSE counts only scans with a track. No correction for comparing several scenarios. | The verdict can miss the worst failure, an over-confident filter. | M3 | ✅ Resolved in 0.5.0: verdict v2 and GOSPA |
 | 5 | The learning loop reuses the same 6 held-out seeds for every round and candidate. 6 seeds cannot reliably resolve the 2 % acceptance margin. | Some risk of overfitting to the held-out seeds. | M3 | ✅ Resolved in 0.5.0: learning evaluation (ADR 0010) |
 | 6 | The constant-velocity model absorbs the turn as process noise; baseline containment is 0.92. | The baseline filter is slightly over-confident by design. | M4 | Partly: the opt-in IMM brings it to 0.96 (5 Nov); the default is still constant velocity |
-| 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Open |
+| 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Partly: an opt-in monitor detects and stops trusting a biased bearing sensor (ADR 0012); correcting for the bias is M6 |
 | 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 | Open |
 | 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 | Open |
 | 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 (0.2.0); scenario files and results with provenance (0.4.0); mypy strict open |
@@ -341,13 +342,26 @@ Deliverables:
 - A new metric set: detection delay, false alarms per run, time spent excluded.
 - ROC curves (detection delay against false-alarm rate) from the `bias_magnitude` family.
 - A module dependency rule so that the monitor cannot import the simulator or evaluation.
-- ADR 0011: sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md).
+- [ADR 0012](adr/0012-sensor-health-monitor.md): sensor exclusion and how it interacts with [ADR 0004](adr/0004-position-updates-keep-tracks-alive.md). (Planned as ADR 0011, a number the IMM tracker took.)
 
 Exit criteria:
 - 1.5° bearing bias detected with a median delay of 30 s or less.
 - False alarms on unbiased scenarios in at most 1 % of runs.
 - In `biased_bearing`, fusion with the monitor is no more than 5 % worse than the baseline (today 97 % worse).
 - In `reference`, at least 90 % of today's fusion gain is kept.
+
+Status (8 November 2026): built and opt-in. The criteria predate the IMM, so both motion models were measured, on
+200 seeds per scenario (20000–20199) that played no part in tuning:
+
+| Criterion | Constant velocity | IMM |
+|---|---|---|
+| Median delay for a 1.5° bias, at most 30 s | 11 s | 11 s |
+| False alarms in at most 1 % of unbiased runs | 2 of 600 | 1 of 600 |
+| `biased_bearing`, at most 5 % worse than the baseline | +1.2 % | +1.9 % |
+| `reference`, at least 90 % of the fusion gain kept | 90.6 % | **88.7 %, not met** |
+
+An earlier held-out block missed a different criterion and was retired; [ADR 0012](adr/0012-sensor-health-monitor.md)
+gives the history and the limits, including that a biased position sensor is not attributed.
 
 ## M6 — Bias estimation (0.8.0, 22 Feb – 7 Mar 2027)
 

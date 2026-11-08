@@ -18,8 +18,9 @@ from itertools import repeat
 
 import numpy as np
 
-from airspace_fusion.config import ScenarioConfig, TrackerConfig
+from airspace_fusion.config import HealthMonitorConfig, ScenarioConfig, TrackerConfig
 from airspace_fusion.estimation import TrackerResult, chi2_quantile, run_tracker
+from airspace_fusion.health import SensorHealth
 from airspace_fusion.scenarios import ScenarioFamily, ScenarioSource
 from airspace_fusion.schemas import Measurement, RejectedRecord, parse_records
 from airspace_fusion.simulator import GroundTruth, SimulationOutput, simulate
@@ -147,7 +148,9 @@ def run_single(scenario: ScenarioConfig, tracker: TrackerConfig, seed: int) -> S
     modes: dict[Mode, ModeRun] = {}
     for mode in Mode:
         sensors = sensors_for_mode(scenario, mode)
-        result = run_tracker(measurements, sim.report_times, tracker, sensor_ids=sensors)
+        # The baseline has one sensor and nothing to fall back on, so the monitor never touches it (ADR 0012).
+        settings = tracker if mode is Mode.FUSION else tracker.model_copy(update={"health_monitor": None})
+        result = run_tracker(measurements, sim.report_times, settings, sensor_ids=sensors)
         # Records with an unreadable sensor_id cannot be attributed, so they count against every mode.
         n_invalid = sum(1 for r in invalid if r.sensor_id is None or r.sensor_id in sensors)
         metrics = evaluate_run(result, sim.truth, n_invalid, scenario.primary.sensor_id)
@@ -467,3 +470,160 @@ def sweep(
         points.append(SweepPoint(value, fixed, compare_modes(fixed, tracker, seeds, executor)))
     corrected = with_holm([point.summary for point in points])  # the points are one family of tests
     return [replace(point, summary=summary) for point, summary in zip(points, corrected)]
+
+
+# -- sensor health monitor (ADR 0012) ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SensorHealthMetrics:
+    """How the health monitor treated one sensor in one run. Only here is the monitor compared with the truth."""
+
+    sensor_id: str
+    biased: bool  # the scenario gives this sensor a bias; the monitor is never told
+    detection_delay_s: float  # biased sensors: run start to first leaving "trusted"; NaN if never or if unbiased
+    false_alarms: int  # unbiased sensors: how many times it left "trusted"
+    time_excluded_s: float  # time in the "excluded" state; probation does not count
+    held_alarms: int  # samples at which a test fired on a protected sensor, which the monitor may not act on
+
+
+def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
+    """Per-sensor health metrics of the fusion mode. Empty when the monitor was off."""
+    report = run.modes[Mode.FUSION].result.health
+    if report is None:
+        return {}
+    scenario, truth = run.simulation.scenario, run.simulation.truth
+    start, end = truth.timestamps[0], truth.timestamps[-1]
+    metrics = {}
+    for sensor in (scenario.primary, scenario.secondary):
+        transitions = report.for_sensor(sensor.sensor_id)
+        alarms = [t for t in transitions if t.previous is SensorHealth.TRUSTED]
+        biased = sensor.bias != 0.0
+        excluded = 0.0
+        since = None
+        for transition in transitions:
+            if transition.state is SensorHealth.EXCLUDED and since is None:
+                since = transition.timestamp
+            elif transition.state is not SensorHealth.EXCLUDED and since is not None:
+                excluded += (transition.timestamp - since).total_seconds()
+                since = None
+        if since is not None:
+            excluded += (end - since).total_seconds()
+        metrics[sensor.sensor_id] = SensorHealthMetrics(
+            sensor_id=sensor.sensor_id,
+            biased=biased,
+            detection_delay_s=(alarms[0].timestamp - start).total_seconds() if biased and alarms else math.nan,
+            false_alarms=0 if biased else len(alarms),
+            time_excluded_s=excluded,
+            held_alarms=report.held_alarms.get(sensor.sensor_id, 0),
+        )
+    return metrics
+
+
+def seed_health(scenario: ScenarioSource, tracker: TrackerConfig, seed: int) -> dict[str, SensorHealthMetrics]:
+    """Health metrics of one seed. Module-level, for workers."""
+    return sensor_health_metrics(run_single(scenario.for_seed(seed), tracker, seed))
+
+
+@dataclass(frozen=True)
+class HealthSummary:
+    """The health monitor's record over many runs of one scenario."""
+
+    scenario: str
+    runs: int
+    biased_runs: int  # runs with a biased sensor
+    detected_runs: int  # of those, runs in which it left "trusted"
+    median_delay_s: float  # over the detected runs; NaN if none
+    runs_with_false_alarm: int
+    mean_false_alarms: float  # per run
+    mean_time_excluded_s: float  # per run, all sensors
+
+    @property
+    def false_alarm_rate(self) -> float:
+        """Fraction of runs in which an unbiased sensor raised at least one alarm."""
+        return self.runs_with_false_alarm / self.runs if self.runs else math.nan
+
+    @property
+    def detection_rate(self) -> float:
+        return self.detected_runs / self.biased_runs if self.biased_runs else math.nan
+
+
+def health_summary(
+    scenario: ScenarioSource, tracker: TrackerConfig, seeds: Sequence[int], executor: Executor | None = None
+) -> HealthSummary:
+    """Detection delay, false alarms and time excluded over ``seeds``. ``tracker`` must have a monitor."""
+    if tracker.health_monitor is None:
+        raise ValueError("health_summary needs a tracker with a health monitor")
+    seeds = tuple(seeds)
+    if executor is None:
+        per_seed = [seed_health(scenario, tracker, seed) for seed in seeds]
+    else:
+        chunksize = max(1, len(seeds) // PARALLEL_BATCHES)
+        per_seed = list(executor.map(seed_health, repeat(scenario), repeat(tracker), seeds, chunksize=chunksize))
+    delays: list[float] = []
+    biased_runs = false_alarm_runs = total_false_alarms = 0
+    excluded = 0.0
+    for sensors in per_seed:
+        values = list(sensors.values())
+        biased_sensors = [m for m in values if m.biased]
+        if biased_sensors:
+            biased_runs += 1
+            detected = [m.detection_delay_s for m in biased_sensors if not math.isnan(m.detection_delay_s)]
+            if detected:
+                delays.append(min(detected))
+        false_alarms = sum(m.false_alarms for m in values)
+        false_alarm_runs += false_alarms > 0
+        total_false_alarms += false_alarms
+        excluded += sum(m.time_excluded_s for m in values)
+    return HealthSummary(
+        scenario=scenario.name,
+        runs=len(seeds),
+        biased_runs=biased_runs,
+        detected_runs=len(delays),
+        median_delay_s=float(np.median(delays)) if delays else math.nan,
+        runs_with_false_alarm=false_alarm_runs,
+        mean_false_alarms=total_false_alarms / len(seeds) if seeds else math.nan,
+        mean_time_excluded_s=excluded / len(seeds) if seeds else math.nan,
+    )
+
+
+def scaled_thresholds(monitor: HealthMonitorConfig, scale: float) -> HealthMonitorConfig:
+    """``monitor`` with both CUSUM alarm limits multiplied by ``scale``: one operating point of a ROC curve."""
+    return monitor.model_copy(
+        update={"suspect_cusum": monitor.suspect_cusum * scale, "exclude_cusum": monitor.exclude_cusum * scale}
+    )
+
+
+@dataclass(frozen=True)
+class RocPoint:
+    """One alarm threshold: its false-alarm rate on unbiased worlds and its detection delay at each bias."""
+
+    threshold_scale: float
+    false_alarm_rate: float  # fraction of runs with an alarm, at zero bias
+    detection: dict[float, HealthSummary]  # bias in degrees -> the record at that bias
+
+
+def health_roc(
+    family: ScenarioFamily,
+    tracker: TrackerConfig,
+    scales: Sequence[float],
+    biases_deg: Sequence[float],
+    seeds: Sequence[int],
+    executor: Executor | None = None,
+) -> list[RocPoint]:
+    """Detection delay against false-alarm rate, from ``family`` with ``bearing_bias_deg`` fixed at each value.
+
+    Every threshold and bias sees the same seeds and the same other draws of the family (common random numbers).
+    """
+    if tracker.health_monitor is None:
+        raise ValueError("health_roc needs a tracker with a health monitor")
+    points = []
+    for scale in scales:
+        scaled = tracker.model_copy(update={"health_monitor": scaled_thresholds(tracker.health_monitor, scale)})
+        unbiased = health_summary(family.with_fixed("bearing_bias_deg", 0.0), scaled, seeds, executor)
+        detection = {
+            bias: health_summary(family.with_fixed("bearing_bias_deg", bias), scaled, seeds, executor)
+            for bias in biases_deg
+        }
+        points.append(RocPoint(scale, unbiased.false_alarm_rate, detection))
+    return points
