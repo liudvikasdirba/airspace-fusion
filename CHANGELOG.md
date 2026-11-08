@@ -16,6 +16,11 @@ All notable changes to this project are recorded here. The format follows
   RMSE too. Opt-in: the default stays constant velocity, so published results are unchanged. Estimates carry
   each model's probability (`Estimate.mode_probabilities`).
 - `evaluation.segment_squared_errors`: a run's squared errors split into turn and straight segments.
+- The learning loop chooses the motion model: the other model is a candidate every round (first when the
+  constant-velocity tracker is over-confident), and an IMM tracker is tuned through its own process noises, which
+  join `TUNABLE_BOUNDS` (0.005–5). From an empty rule book `learn` chooses the IMM in all four built-in scenarios
+  (sealed-test scores 16–24 % lower where fusion stays on). Old rule books still load. `same_settings` now compares the motion model and
+  only the settings that model uses.
 
 ### Changed
 

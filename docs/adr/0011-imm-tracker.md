@@ -47,3 +47,6 @@ meaning. The defaults were tuned on `reference` (60 seeds) against the M4 exit c
   sensors): three models, each mixed and filtered in small NumPy steps. Stone Soup is not a cross-check for
   it; `tests/test_imm.py` checks it against the constant-velocity tracker (three identical models must agree)
   and the turn model against the exact circle.
+- The factory default stays constant velocity (decided 5 November 2026). Instead, the learning loop treats the
+  motion model as a candidate setting, held to the same held-out test as any other change, and tunes an IMM
+  through its own process noises. From an empty rule book it chooses the IMM in every built-in scenario.
