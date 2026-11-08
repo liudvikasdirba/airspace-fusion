@@ -155,3 +155,33 @@ def test_rolling_bearing_nis_separates_bias():
                                     bias=math.radians(1.5))
     )
     assert rolling_bearing_nis_in_band(biased, 10) <= 0.5
+
+
+# -- IMM (M4, ADR 0011) ------------------------------------------------------------------------------------------
+
+IMM_MATCHED = {"motion_model": "imm", "imm_straight_process_noise_m2_s3": ACCEL_STD_MPS2**2,
+               "imm_turn_process_noise_m2_s3": ACCEL_STD_MPS2**2}
+
+
+@pytest.fixture(scope="module")
+def imm_matched() -> dict[Mode, ConsistencyStats]:
+    return consistency(matched_scenario(), matched_tracker(**IMM_MATCHED), 20)
+
+
+@pytest.mark.parametrize("mode", list(Mode))
+def test_imm_is_consistent_or_mildly_conservative(imm_matched, mode):
+    """With matched noise the IMM is never over-confident. Mixing in the turn models widens its covariance a
+    little on straight flight, so it may be slightly conservative (calibration: ANEES 3.34, containment 0.95)."""
+    s = imm_matched[mode]
+    assert 2.8 <= s.anees <= 4.4, s
+    assert 1.8 <= s.nis_position <= 2.1, s
+    assert 0.93 <= s.containment_95 <= 0.98, s
+
+
+def test_imm_detects_overconfident_filter():
+    """Negative control: the IMM with 100x too little process noise in every model must fail the checks."""
+    tiny = ACCEL_STD_MPS2**2 / 100
+    s = consistency(matched_scenario(), matched_tracker(**IMM_MATCHED | {
+        "imm_straight_process_noise_m2_s3": tiny, "imm_turn_process_noise_m2_s3": tiny}), 10)
+    assert s[Mode.BASELINE].anees > 4.4
+    assert s[Mode.BASELINE].containment_95 < 0.93

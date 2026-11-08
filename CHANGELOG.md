@@ -8,6 +8,15 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- IMM tracker (`motion_model = "imm"`, `--motion-model imm` on `run`, `compare` and `sweep`): constant velocity
+  plus coordinated turns at ±3°/s, mixed every scan ([ADR 0011](docs/adr/0011-imm-tracker.md)). In `reference`
+  it brings baseline 95 % containment from 0.93 to 0.96 and turn RMSE from 22.9 to 16.9 m, with lower straight
+  RMSE too. Opt-in: the default stays constant velocity, so published results are unchanged. Estimates carry
+  each model's probability (`Estimate.mode_probabilities`).
+- `evaluation.segment_squared_errors`: a run's squared errors split into turn and straight segments.
+
 ### Changed
 
 - Results files are format 3: `config_hash` now covers the Holm family (`multiple_comparisons`), because it

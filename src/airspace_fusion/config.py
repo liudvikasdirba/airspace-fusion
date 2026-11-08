@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -97,6 +98,19 @@ class TrackerConfig(BaseModel):
     max_initiation_speed_mps: float = Field(default=60.0, gt=0.0)
     # Drop the track after this long without an accepted position update.
     max_coast_s: float = Field(default=8.0, gt=0.0)
+
+    # Motion model: "cv" (nearly constant velocity) or "imm" (interacting multiple model: constant velocity plus
+    # coordinated turns at +/- imm_turn_rate_deg_s; ADR 0011). The imm_ settings apply only to "imm"; defaults were
+    # tuned on `reference` (60 seeds) against the M4 exit criteria.
+    motion_model: Literal["cv", "imm"] = "cv"
+    imm_turn_rate_deg_s: float = Field(default=3.0, gt=0.0, le=30.0)
+    # Probability of staying in the same model from one scan to the next; the rest is split between the others.
+    imm_stay_probability: float = Field(default=0.99, gt=0.0, lt=1.0)
+    # Process noise of the IMM's constant-velocity model, m^2/s^3. Much lower than process_noise_m2_s3, because
+    # the turn models take the turns that the "cv" tracker has to absorb as noise.
+    imm_straight_process_noise_m2_s3: float = Field(default=0.05, gt=0.0)
+    # Process noise of the two coordinated-turn models, m^2/s^3.
+    imm_turn_process_noise_m2_s3: float = Field(default=0.05, gt=0.0)
 
 
 def with_sensor_overrides(
