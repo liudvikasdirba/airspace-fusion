@@ -119,7 +119,7 @@ ALLOWED_IMPORTS = {
     "agents": {"config", "evaluation", "learning", "scenarios"},
     "results": {"config", "evaluation", "scenarios"},
     "cli": {"agents", "config", "evaluation", "learning", "results", "scenarios"},
-    "app": {"config", "estimation", "evaluation", "scenarios", "schemas"},
+    "app": {"config", "estimation", "evaluation", "health", "scenarios", "schemas"},  # health: SensorHealth states
 }
 
 

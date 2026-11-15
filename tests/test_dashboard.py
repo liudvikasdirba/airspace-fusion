@@ -11,7 +11,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import airspace_fusion
-from airspace_fusion.config import SCENARIOS, TrackerConfig, with_sensor_overrides
+from airspace_fusion.config import SCENARIOS, HealthMonitorConfig, TrackerConfig, with_sensor_overrides
 from airspace_fusion.evaluation import METRIC_NAMES, Mode, compare_modes, run_single
 
 pytestmark = pytest.mark.slow
@@ -185,3 +185,95 @@ def test_distant_sensor_does_not_squash_trajectory_plot():
     y_min, y_max = trajectory["layout"]["yaxis"]["range"]
     assert y_min > -10_000.0  # the bearing sensor at y = -30 km is left off-plot
     assert y_max - y_min < 10_000.0
+
+
+# -- tracker controls: IMM and sensor health monitor -----------------------------------------------------------
+
+
+def charts(at: AppTest) -> list[dict]:
+    return [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+
+
+def chart_with(at: AppTest, name: str) -> dict | None:
+    return next((fig for fig in charts(at) if name in trace_names(fig)), None)
+
+
+def test_default_tracker_shows_no_imm_or_health_charts():
+    at = start()
+    assert len(charts(at)) == 3
+    assert "tracker constant velocity, health monitor off" in showing(at)
+    assert widget(at, "radio", "Motion model").value == "Constant velocity"
+    assert widget(at, "checkbox", "Sensor health monitor").value is False
+
+
+def test_imm_shows_its_model_probabilities():
+    at = start()
+    widget(at, "radio", "Motion model").set_value("IMM (constant velocity + turns)")
+    at.run()
+    assert "tracker constant velocity" in showing(at)  # nothing changes until Run is clicked
+    click(at, "Run simulation")
+    assert "tracker IMM" in showing(at)
+    fig = chart_with(at, "right turn")
+    assert fig is not None
+    assert trace_names(fig) == {"constant velocity", "left turn", "right turn"}
+    assert len([t for t in fig["data"] if t["name"] == "right turn"]) == 2  # one panel per mode
+    # The right-turn model dominates during the reference turn (60-100 s), as in tests/test_imm.py.
+    trace = next(t for t in fig["data"] if t["name"] == "right turn")
+    during = [p for x, p in zip(trace["x"], trace["y"]) if p is not None and 70 <= x < 100]
+    assert sum(during) / len(during) > 0.5
+    expected = run_single(SCENARIOS["reference"], TrackerConfig(motion_model="imm"), 0)
+    table = at.dataframe[0].value
+    rmse = next(row for row, name in zip(table.itertuples(), METRIC_NAMES) if name == "position_rmse_m")
+    assert rmse.fusion == pytest.approx(expected.modes[Mode.FUSION].metrics.position_rmse_m)
+
+
+def test_health_monitor_timeline_and_table_for_a_biased_bearing():
+    at = start()
+    widget(at, "selectbox", "Scenario").set_value("biased_bearing")
+    widget(at, "checkbox", "Sensor health monitor").check()
+    at.run()
+    click(at, "Run simulation")
+    assert "health monitor on (fusion only)" in showing(at)
+    fig = chart_with(at, "excluded (ignored)")
+    assert fig is not None
+    excluded = next(t for t in fig["data"] if t["name"] == "excluded (ignored)")
+    bearing = SCENARIOS["biased_bearing"].secondary.sensor_id
+    assert bearing in excluded["y"]
+    assert SCENARIOS["biased_bearing"].primary.sensor_id not in excluded["y"]  # the last position sensor stays
+    probation = next(t for t in fig["data"] if t["name"] == "on probation (tested, not used)")
+    assert bearing in probation["y"]
+    table = at.dataframe[1].value
+    assert set(table.index) == {SCENARIOS["biased_bearing"].primary.sensor_id, bearing}
+    assert bool(table.loc[bearing, "biased (truth label)"]) is True
+    assert table.loc[bearing, "first alarm (s)"] <= 30.0
+
+
+def test_health_chart_follows_the_view_and_the_monitor_setting():
+    at = start()
+    widget(at, "checkbox", "Sensor health monitor").check()
+    at.run()
+    click(at, "Run simulation")
+    assert chart_with(at, "trusted") is not None
+    widget(at, "radio", "Show").set_value("Baseline only")
+    at.run()
+    assert chart_with(at, "trusted") is None  # the monitor never runs on the baseline
+    widget(at, "radio", "Show").set_value("Both")
+    widget(at, "checkbox", "Sensor health monitor").uncheck()
+    at.run()
+    click(at, "Run simulation")
+    assert chart_with(at, "trusted") is None
+    assert any("Turn on the sensor health monitor" in c.value for c in at.caption)
+
+
+def test_multi_seed_comparison_uses_and_names_the_tracker():
+    at = start()
+    widget(at, "radio", "Motion model").set_value("IMM (constant velocity + turns)")
+    widget(at, "checkbox", "Sensor health monitor").check()
+    widget(at, "number_input", "Seeds for multi-seed").set_value(2)
+    at.run()
+    click(at, "Run multi-seed comparison")
+    assert any(c.value == "Tracker IMM, health monitor on (fusion only)." for c in at.caption)
+    tracker = TrackerConfig(motion_model="imm", health_monitor=HealthMonitorConfig())
+    expected = compare_modes(with_sensor_overrides(SCENARIOS["reference"], 1.0, 0.1), tracker, [0, 1])
+    verdict = next(m.value for m in at.markdown if m.value.startswith("**Verdict:"))
+    assert f"{expected.rmse_delta_mean_m:+.2f} m" in verdict

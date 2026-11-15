@@ -46,8 +46,10 @@ same option, but Streamlit reads it only when started from the repository root.
 | Missed-observation probability | Chance that each sensor misses the object on a scan (0 to 0.8). |
 | Show | Both modes, baseline only, or fusion only. |
 | Show bearing rays | Draws each bearing observation as a faint line from the bearing sensor. |
-| **Run simulation** | Runs with the current settings. Changing controls has no effect until you click it; the **Showing:** line states which settings are on screen. |
-| Seeds / **Run multi-seed comparison** | Runs the current settings over N consecutive seeds starting at the chosen seed, and gives a verdict. |
+| Motion model | Constant velocity (the default) or the [IMM](#turns-the-imm-tracker), which adds coordinated-turn models. |
+| Sensor health monitor | Turns on the [monitor](#sensor-health-monitor) for the fusion mode; the baseline never has one. |
+| **Run simulation** | Runs with the current settings. Changing controls has no effect until you click it; the **Showing:** line states which settings are on screen, including the tracker. |
+| Seeds / **Run multi-seed comparison** | Runs the current settings, tracker included, over N consecutive seeds starting at the chosen seed, and gives a verdict. |
 
 **Page, top to bottom**
 
@@ -62,12 +64,18 @@ same option, but Streamlit reads it only when started from the repository root.
 2. **Metrics (this run)**: every metric for baseline, fusion and their difference (see [Metrics](#metrics)).
 3. **Error over time**: the solid lines are the actual distance from the truth; the dotted lines are each filter's
    own 95 % radius. A solid line that stays above its dotted line means that filter is over-confident.
-4. **Filter consistency**: the rolling mean of each sensor's normalised innovation squared (NIS) over its last 20
+4. **IMM model probabilities** (IMM only): for each mode, the probability of the constant-velocity, left-turn and
+   right-turn models after every scan. The right-turn model should lead during the turn (60–100 s).
+5. **Filter consistency**: the rolling mean of each sensor's normalised innovation squared (NIS) over its last 20
    accepted updates, divided by the measurement dimension, with the 95 % band a consistent filter stays in. It uses
-   no ground truth: a line above the band means the filter trusts that sensor too much. It is a display only; the
-   tracker does not act on it.
-5. **Multi-seed comparison** (after you run it): mean ± standard deviation per metric, and the verdict.
-6. **Limitations of this simulation** (expandable).
+   no ground truth: a line above the band means the filter trusts that sensor too much. The tracker acts on it only
+   through the health monitor.
+6. **Sensor health monitor** (monitor on, fusion shown): a timeline of each sensor's state (trusted, suspect,
+   excluded) with its probation periods, and a table of first alarm, false alarms, time excluded, time on probation
+   and the alarms held on the last position sensor.
+7. **Multi-seed comparison** (after you run it): mean ± standard deviation per metric, the verdict, and which tracker
+   it used.
+8. **Limitations of this simulation** (expandable).
 
 **A single seed is an anecdote.** Draw conclusions from the multi-seed verdict.
 
@@ -77,6 +85,9 @@ Suggested sequence:
 3. Raise the noise multiplier, then the missed-observation probability.
 4. Switch to `biased_bearing`: RMSE rises, containment collapses, and the bearing sensor's NIS climbs far above its band.
 5. Switch to `distant_bearing`: the extra sensor adds almost nothing.
+6. Back on `biased_bearing`, turn on the sensor health monitor: the bearing sensor is excluded within seconds and
+   fusion's error falls back to the baseline's.
+7. Choose the IMM on `reference`: the turn is tracked with less error, and the model probabilities show the switch.
 
 ## Command line
 
@@ -611,6 +622,8 @@ Manual dashboard checklist, per release (everything else is covered by `tests/te
 - the page renders in light and dark themes, with a readable legend and visible sensors and ellipses
 - at about 800 px wide with the sidebar open, the metrics table fits and the page has no horizontal scroll
 - tooltips show units
+- with the IMM and the health monitor on, the model-probability and sensor-state charts are legible in both themes,
+  and their legends name every colour
 - the server listens on 127.0.0.1 only: `netstat -an | findstr 8501` on Windows, `ss -ltn | grep 8501` on Linux
 
 ## Documentation, changelog and versions
