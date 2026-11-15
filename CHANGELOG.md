@@ -8,6 +8,30 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Health metrics report time on probation (`time_on_probation_s`, `HealthSummary.mean_time_on_probation_s`, a new
+  column in the `health` table). A sensor on probation is ignored like an excluded one, which "time excluded" did
+  not show. `HealthReport` also gives each measurement kind's final state (`final_states_by_kind`), since the tracker
+  acts on each kind separately, and the probation periods.
+
+### Fixed
+
+- Fixes from the code review of 0.7.0, all in the opt-in health monitor; results without it are unchanged:
+  - Another position sensor now ends protection only if it has updated the track recently, not just been heard. A
+    sensor whose measurements were all gated out could let the monitor exclude the only sensor keeping the track alive.
+  - A suspect sensor's accepted updates record the NIS of the down-weighted update that was applied, not of the
+    nominal noise.
+  - The normalised innovation no longer fails with a math domain error when rounding makes a nearly singular
+    innovation covariance look indefinite.
+  - The learning loop no longer treats trackers with and without a health monitor as the same setting.
+  - Results files leave out only an unset health monitor, not every empty tracker setting, so a future setting that is
+    None still reaches `config_hash` and `reproduce`.
+  - Down-weighting scales the measurement noise inside the filter instead of copying the measurement, and the
+    monitor keeps running window sums. Position sensors no longer carry probation state they never use.
+  - ADR 0012 said a sensor's first 4 samples are withheld on probation; it is the first 3, since the sample that
+    ends probation is used. The behaviour and every published number are unchanged; the text is corrected.
+
 ## [0.7.0] - 2026-11-15
 
 M5 finished: an opt-in sensor health monitor that notices, without ground truth, that a sensor is hurting fusion

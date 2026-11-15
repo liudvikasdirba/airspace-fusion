@@ -29,18 +29,21 @@ the track, which no longer contains it, and returns through suspect after 20 sam
 Three rules go beyond the tests:
 
 - **The last usable position sensor is protected.** Another position sensor is an alternative only if it is not
-  excluded and has been heard within half the coast limit, so a remaining sensor is reinstated before a track would be
-  dropped. A protected sensor is tested and its alarms are counted (`held_alarms`), but it is trusted, whatever state
+  excluded and has updated the track within half the coast limit, so a remaining sensor is reinstated before a track
+  would be dropped. Being heard is not enough: a sensor whose measurements are all gated out keeps no track alive.
+  Without a track, for deciding which sensors may start one, being heard within that time is what counts. A protected sensor is tested and its alarms are counted (`held_alarms`), but it is trusted, whatever state
   it was in. When protection ends, what it accumulated is dropped, since the monitor could not act on it. This is how
   the monitor respects ADR 0004: it can never remove the updates that keep a track alive. An excluded position sensor
   cannot start a track either while another is usable. Protection also fixes the attribution: position sensors are the
   reference that other sensors are judged against. Excluding bearings costs a track nothing, since bearings never kept
   it alive.
-- **Other sensors start each track on probation.** Their first 4 samples against the track are tested but not used,
-  even if they raise an alarm, and probation lasts until the window mean is not shifted, for at most one window. Once a
+- **Other sensors start each track on probation.** Their samples against the track are tested but not used, even if
+  they raise an alarm, until `probation_samples` (4) have been tested and the window mean is not shifted, for at most
+  one window. The sample that ends probation is already used, so at least 3 samples are withheld. Once a
   bias is in the state the filter absorbs it and the innovations shrink, so the first samples are the best evidence
   available. A new track also clears every sensor's tests, because samples against the old track say nothing about
-  this one; a sensor's state carries over. Probation is not an alarm and does not count as time excluded.
+  this one; a sensor's state carries over. Probation is not an alarm and is not time excluded, but it is reported on
+  its own (`time_on_probation_s`), since the sensor's measurements are ignored just the same.
 - **The baseline has no monitor.** It has one sensor and nothing to fall back on, so baseline results are identical
   with the monitor on or off.
 

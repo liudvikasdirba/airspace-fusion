@@ -94,7 +94,9 @@ class StoneSoupTracker(SingleTargetTracker):
     def _predict(self, state: TrackState, t: datetime) -> TrackState:
         return from_stonesoup(self.predictor.predict(to_stonesoup(state), timestamp=t))
 
-    def _nis(self, prior: TrackState, m: Measurement) -> tuple[float, object]:
+    def _nis(self, prior: TrackState, m: Measurement, noise_scale: float = 1.0) -> tuple[float, object]:
+        if noise_scale != 1.0:  # only the health monitor down-weights, and it is refused in __init__
+            raise ValueError("the Stone Soup cross-check does not scale measurement noise")
         detection = self._detection(m)
         prediction = to_stonesoup(prior)
         mp = self.updater.predict_measurement(prediction, detection.measurement_model)
