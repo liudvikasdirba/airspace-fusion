@@ -10,6 +10,10 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- Dashboard controls for the motion model (constant velocity or IMM) and the sensor health monitor. With the IMM, a
+  chart shows each model's probability over time. With the monitor, a timeline shows each sensor's state (trusted,
+  suspect, excluded) and its probation periods, beside a table of the monitor's metrics. The **Showing:** line and
+  the multi-seed comparison name the tracker used.
 - Health metrics report time on probation (`time_on_probation_s`, `HealthSummary.mean_time_on_probation_s`, a new
   column in the `health` table). A sensor on probation is ignored like an excluded one, which "time excluded" did
   not show. `HealthReport` also gives each measurement kind's final state (`final_states_by_kind`), since the tracker

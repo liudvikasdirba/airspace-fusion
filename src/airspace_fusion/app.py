@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -10,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from airspace_fusion.config import DEFAULT_SCENARIO, TrackerConfig
+from airspace_fusion.config import DEFAULT_SCENARIO, HealthMonitorConfig, TrackerConfig
 from airspace_fusion.estimation import NIS_WINDOW, Estimate, nis_series
 from airspace_fusion.evaluation import (
     CHI2_2DOF_95,
@@ -20,7 +21,9 @@ from airspace_fusion.evaluation import (
     compare_modes,
     explain_verdict,
     run_single,
+    sensor_health_metrics,
 )
+from airspace_fusion.health import SensorHealth
 from airspace_fusion.scenarios import ScenarioFamily, builtin_sources, with_overrides
 from airspace_fusion.schemas import MeasurementType
 
@@ -34,12 +37,30 @@ OBS_COLOR = "#9d9c97"
 SENSOR_OUTLINE = "#f0efec"
 ELLIPSE_EVERY_N = 10
 
+# Status palette (reserved for state, always shown with its label): trusted = good, suspect = warning,
+# excluded = critical. Probation is not an alarm, so it is neutral grey.
+STATE_COLORS = {SensorHealth.TRUSTED: "#0ca30c", SensorHealth.SUSPECT: "#fab219", SensorHealth.EXCLUDED: "#d03b3b"}
+STATE_LABELS = {
+    SensorHealth.TRUSTED: "trusted",
+    SensorHealth.SUSPECT: "suspect (down-weighted)",
+    SensorHealth.EXCLUDED: "excluded (ignored)",
+}
+PROBATION_LABEL = "on probation (tested, not used)"
+# The IMM's models in its own order (turn rates 0, +w, -w; positive is anticlockwise). Categorical slots 3-5, so
+# they never borrow the baseline and fusion colours; line dashes are the second encoding next to the legend.
+IMM_MODELS = (("constant velocity", "#1baf7a", "solid"), ("left turn", "#eda100", "dash"),
+              ("right turn", "#e87ba4", "dot"))
+MOTION_MODELS: dict[str, Literal["cv", "imm"]] = {"Constant velocity": "cv", "IMM (constant velocity + turns)": "imm"}
+
 LIMITATIONS = """
 **This is a synthetic, educational simulation - not an operational system.**
 
 - One synthetic object, two stationary synthetic sensors, generic 2D frame in metres. No real hardware, terrain or
   propagation.
-- Nearly-constant-velocity Kalman filter; the turn is model mismatch absorbed by process noise.
+- By default a nearly-constant-velocity Kalman filter: the turn is model mismatch absorbed by process noise. The
+  IMM option adds coordinated-turn models at a fixed 3 deg/s; faster turns are still tracked over-confidently.
+- The optional sensor health monitor judges each sensor only against the track. A biased *position* sensor is blamed
+  on the bearing sensor, because positions are the reference.
 - Bearing updates use an extended Kalman update (linearised `atan2`). Poor geometry (target near the bearing sensor
   or far away) gives little or unreliable information; very close geometry is explicitly rejected.
 - The filter assumes zero-mean, independent, white errors. A biased or correlated sensor makes fusion over-confident
@@ -201,6 +222,94 @@ def nis_figure(run: SingleRun, modes: list[Mode]) -> go.Figure:
     return fig
 
 
+def mode_probability_figure(run: SingleRun, modes: list[Mode]) -> go.Figure | None:
+    """Which motion model the IMM believes over time, one panel per mode. None for the constant-velocity tracker."""
+    shown = [m for m in modes if any(e.mode_probabilities for e in run.modes[m].result.estimates)]
+    if not shown:
+        return None
+    t0 = run.simulation.truth.timestamps[0]
+    fig = make_subplots(rows=len(shown), cols=1, shared_xaxes=True, vertical_spacing=0.14,
+                        subplot_titles=[MODE_LABELS[m] for m in shown])
+    for row, mode in enumerate(shown, start=1):
+        estimates = run.modes[mode].result.estimates
+        t = [(e.timestamp - t0).total_seconds() for e in estimates]
+        for k, (name, color, dash) in enumerate(IMM_MODELS):
+            y = [None if e.mode_probabilities is None else e.mode_probabilities[k] for e in estimates]
+            fig.add_trace(go.Scatter(x=t, y=y, mode="lines", line=dict(color=color, width=2, dash=dash), name=name,
+                                     legendgroup=name, showlegend=row == 1,
+                                     hovertemplate="t=%{x:.0f} s  %{y:.2f}<extra>" + f"{mode.value}: {name}</extra>"),
+                          row=row, col=1)
+    fig.update_xaxes(title="time (s)", row=len(shown), col=1)
+    fig.update_yaxes(title="probability", range=[0, 1.02])
+    fig.update_layout(height=200 + 160 * len(shown), margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
+                      legend=dict(orientation="h", yanchor="top", y=-0.2))
+    return fig
+
+
+def health_segments(run: SingleRun) -> list[dict[str, Any]]:
+    """Each sensor's state over the fusion run as time segments, plus its probation periods; empty without a monitor."""
+    report = run.modes[Mode.FUSION].result.health
+    if report is None:
+        return []
+    scenario, truth = run.simulation.scenario, run.simulation.truth
+    t0, end = truth.timestamps[0], truth.timestamps[-1]
+    rows: list[dict[str, Any]] = []
+    for sensor in (scenario.primary, scenario.secondary):
+        state, since, reason = SensorHealth.TRUSTED, t0, "start"
+        for transition in report.for_sensor(sensor.sensor_id):
+            rows.append({"sensor": sensor.sensor_id, "state": STATE_LABELS[state], "health": state,
+                         "start_s": (since - t0).total_seconds(), "end_s": (transition.timestamp - t0).total_seconds(),
+                         "reason": reason})
+            state, since, reason = transition.state, transition.timestamp, transition.reason
+        rows.append({"sensor": sensor.sensor_id, "state": STATE_LABELS[state], "health": state,
+                     "start_s": (since - t0).total_seconds(), "end_s": (end - t0).total_seconds(), "reason": reason})
+        for first, last in report.probation.get(sensor.sensor_id, ()):
+            rows.append({"sensor": sensor.sensor_id, "state": PROBATION_LABEL, "health": None,
+                         "start_s": (first - t0).total_seconds(), "end_s": (last - t0).total_seconds(),
+                         "reason": "new track"})
+    return [r for r in rows if r["end_s"] > r["start_s"]]
+
+
+def health_figure(run: SingleRun) -> go.Figure | None:
+    """Timeline of each sensor's state in the fusion run. None when the monitor was off."""
+    segments = health_segments(run)
+    if not segments:
+        return None
+    fig = go.Figure()
+    legend = [(STATE_LABELS[h], STATE_COLORS[h]) for h in SensorHealth] + [(PROBATION_LABEL, TRUTH_COLOR)]
+    for label, color in legend:  # one trace per state, in a fixed order, so the legend names every colour
+        chosen = [r for r in segments if r["state"] == label]
+        fig.add_trace(go.Bar(
+            y=[r["sensor"] for r in chosen], x=[r["end_s"] - r["start_s"] for r in chosen],
+            base=[r["start_s"] for r in chosen], orientation="h", name=label, marker=dict(color=color),
+            width=0.3 if label == PROBATION_LABEL else 0.55,  # probation drawn as a thinner band on top
+            customdata=[[r["start_s"], r["end_s"], r["reason"]] for r in chosen],
+            hovertemplate="%{y}: " + label + "<br>%{customdata[0]:.0f}-%{customdata[1]:.0f} s"
+                          "<br>why: %{customdata[2]}<extra></extra>",
+            showlegend=True,
+        ))
+    fig.update_xaxes(title="time (s)", range=[0, max(r["end_s"] for r in segments)])
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(barmode="overlay", height=260, margin=dict(l=10, r=10, t=30, b=10),
+                      legend=dict(orientation="h", yanchor="top", y=-0.3))
+    return fig
+
+
+def health_table(run: SingleRun) -> pd.DataFrame:
+    rows = [{"sensor": m.sensor_id, "biased (truth label)": m.biased,
+             "first alarm (s)": m.detection_delay_s, "false alarms": m.false_alarms,
+             "time excluded (s)": m.time_excluded_s, "time on probation (s)": m.time_on_probation_s,
+             "alarms held (last position sensor)": m.held_alarms}
+            for m in sensor_health_metrics(run).values()]
+    return pd.DataFrame(rows).set_index("sensor")
+
+
+def describe_tracker(tracker: TrackerConfig) -> str:
+    model = "IMM" if tracker.motion_model == "imm" else "constant velocity"
+    monitor = "on (fusion only)" if tracker.health_monitor is not None else "off"
+    return f"tracker {model}, health monitor {monitor}"
+
+
 def _radius95(e: Estimate) -> float:
     return float(math.sqrt(CHI2_2DOF_95 * np.max(np.linalg.eigvalsh(e.position_covariance))))
 
@@ -250,16 +359,24 @@ def main() -> None:
         miss = st.slider("Missed-observation probability (both sensors)", 0.0, 0.8, 0.1, 0.05)
         view = st.radio("Show", ["Both", "Baseline only", "Fusion only"], horizontal=True) or "Both"
         show_bearings = st.checkbox("Show bearing rays", value=True)
+        st.header("Tracker")
+        motion_label = st.radio("Motion model", list(MOTION_MODELS), help="The IMM mixes constant velocity with "
+                                "coordinated turns at 3 deg/s (ADR 0011).") or "Constant velocity"
+        monitored = st.checkbox("Sensor health monitor (fusion only)", value=False,
+                                help="Tests each sensor's innovations and stops trusting inconsistent ones (ADR 0012).")
         run_clicked = st.button("Run simulation", type="primary", width="stretch")
         st.divider()
         n_seeds = st.number_input("Seeds for multi-seed comparison", min_value=2, max_value=100, value=10)
         compare_clicked = st.button("Run multi-seed comparison", width="stretch")
 
     scenario = with_overrides(sources[scenario_name], noise, miss)
-    tracker = TrackerConfig()
+    tracker = TrackerConfig(motion_model=MOTION_MODELS[motion_label],
+                            health_monitor=HealthMonitorConfig() if monitored else None)
     if run_clicked or "run" not in st.session_state:
         st.session_state["run"] = run_single(scenario.for_seed(int(seed)), tracker, int(seed))
+        st.session_state["run_tracker"] = tracker
     run: SingleRun = st.session_state["run"]
+    run_tracker: TrackerConfig = st.session_state.get("run_tracker", TrackerConfig())
     modes = {"Both": list(Mode), "Baseline only": [Mode.BASELINE], "Fusion only": [Mode.FUSION]}[view]
 
     sim_scn = run.simulation.scenario
@@ -267,7 +384,8 @@ def main() -> None:
         f"**Showing:** scenario `{sim_scn.name}`, seed {run.simulation.seed}, "
         f"position noise {sim_scn.primary.noise_std:.0f} m, "
         f"bearing noise {math.degrees(sim_scn.secondary.noise_std):.2f} deg, "
-        f"miss probability {1 - sim_scn.primary.detection_probability:.2f}. Both modes use the same truth and records."
+        f"miss probability {1 - sim_scn.primary.detection_probability:.2f}, {describe_tracker(run_tracker)}. "
+        "Both modes use the same truth and records."
     )
     if sim_scn.description.startswith(f"{sim_scn.name} seed "):  # drawn by a family: say which world
         st.caption(f"World: {sim_scn.description}")
@@ -279,20 +397,45 @@ def main() -> None:
     st.caption("Lower RMSE is better. RMSE only covers scans where a track exists - read it with coverage. "
                "GOSPA covers every scan: a scan without a track costs about 106 m (cut-off 150 m).")
     st.plotly_chart(error_figure(run, modes), width="stretch")
+    probabilities = mode_probability_figure(run, modes)
+    if probabilities is not None:
+        st.subheader("IMM: which motion model the tracker believes")
+        st.plotly_chart(probabilities, width="stretch")
+        st.caption("Probability of each model after every scan. In the built-in scenarios the object turns right "
+                   "between 60 s and 100 s, so the right-turn model should lead there, and constant velocity before "
+                   "and after. On a single seed the models often trade places during the turn.")
     st.subheader("Filter consistency (no ground truth needed)")
     st.plotly_chart(nis_figure(run, modes), width="stretch")
     st.caption(f"Rolling mean of the normalised innovation squared (NIS) over the last {NIS_WINDOW} accepted "
                "updates of each sensor, divided by the measurement dimension. A consistent filter stays near 1, "
                "inside the grey 95% band. Above the band, the filter trusts that sensor too much (for example "
-               "an unmodelled bias); below it, too little. This is a display only: the tracker does not act on it.")
+               "an unmodelled bias); below it, too little. The tracker acts on it only when the health monitor is "
+               "on (below).")
+
+    health = health_figure(run) if Mode.FUSION in modes else None
+    if health is not None:
+        st.subheader("Sensor health monitor (fusion)")
+        st.plotly_chart(health, width="stretch")
+        st.dataframe(health_table(run).style.format("{:.4g}", na_rep="-", subset=pd.IndexSlice[:, [
+            "first alarm (s)", "time excluded (s)", "time on probation (s)"]]), width="stretch")
+        st.caption("Each sensor is judged only against the track, from its normalised innovations: trusted, "
+                   "suspect (its noise is inflated) or excluded (its measurements are ignored until they are "
+                   "consistent again). Bearing sensors start each track on probation. The last position sensor "
+                   "is never excluded, because only positions keep a track alive; its alarms are only counted. "
+                   "'Biased' is a truth label for display: the monitor never sees it.")
+    elif Mode.FUSION in modes and run_tracker.health_monitor is None:
+        st.caption("Turn on the sensor health monitor in the sidebar to see when fusion stops trusting a sensor.")
 
     if compare_clicked:
         seeds = list(range(int(seed), int(seed) + int(n_seeds)))
         with st.spinner(f"Running {len(seeds)} seeds x 2 modes..."):
             st.session_state["comparison"] = compare_modes(scenario, tracker, seeds)
+            st.session_state["comparison_tracker"] = tracker
     if "comparison" in st.session_state:
         s = st.session_state["comparison"]
         st.subheader(f"Multi-seed comparison: `{s.scenario}`, seeds {s.seeds[0]}-{s.seeds[-1]} (n={len(s.seeds)})")
+        described = describe_tracker(st.session_state.get("comparison_tracker", TrackerConfig()))
+        st.caption(described[0].upper() + described[1:] + ".")  # not capitalize(), which would lower "IMM"
         rows = [{"metric": METRIC_LABELS[name],
                  **{m.value: f"{s.metrics[m][name].mean:.4g} ± {s.metrics[m][name].std:.2g}" for m in Mode}}
                 for name in METRIC_NAMES]
