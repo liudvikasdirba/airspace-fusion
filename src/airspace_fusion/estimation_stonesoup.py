@@ -62,6 +62,8 @@ def from_stonesoup(state: GaussianState) -> TrackState:
 
 class StoneSoupTracker(SingleTargetTracker):
     def __init__(self, config: TrackerConfig) -> None:
+        if config.health_monitor is not None:
+            raise ValueError("the Stone Soup cross-check has no health monitor; use the NumPy tracker")
         super().__init__(config)
         q = config.process_noise_m2_s3
         self.transition_model = CombinedLinearGaussianTransitionModel([ConstantVelocity(q), ConstantVelocity(q)])

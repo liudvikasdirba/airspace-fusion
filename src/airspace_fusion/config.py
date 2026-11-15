@@ -85,6 +85,45 @@ class ScenarioConfig(BaseModel):
         return self
 
 
+class HealthMonitorConfig(BaseModel):
+    """Sensor health monitor settings (ADR 0012).
+
+    All tests work on normalised innovations, one sample per sensor per scan, so these numbers do not depend on a
+    sensor's units. The ``*_probability`` values are per-test tail probabilities of the windowed chi-square sum.
+    Defaults were tuned on seeds 0-299 of the built-in scenarios, with both motion models, against the M5 exit
+    criteria; `tests/test_statistics.py` checks them on seeds that played no part in the tuning.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    window_samples: int = Field(default=20, ge=2)
+    # No test may fire before this many samples of a sensor: the first innovations of a new track say little.
+    min_samples: int = Field(default=5, ge=1)
+    # A non-position sensor's first samples are only tested, not used, so a bad sensor never touches the track.
+    probation_samples: int = Field(default=4, ge=0)
+    # CUSUM: allowance per sample (half the smallest shift of interest, in innovation sigmas) and the two alarm limits.
+    cusum_drift: float = Field(default=0.75, gt=0.0)
+    suspect_cusum: float = Field(default=12.0, gt=0.0)
+    exclude_cusum: float = Field(default=16.0, gt=0.0)
+    suspect_window_probability: float = Field(default=1e-8, gt=0.0, lt=1.0)
+    exclude_window_probability: float = Field(default=1e-10, gt=0.0, lt=1.0)
+    # A suspect sensor's measurement variance is multiplied by this.
+    suspect_noise_scale: float = Field(default=4.0, gt=1.0)
+    # "Consistent again": at least release_samples since the last change of state, a window sum below this tail
+    # probability's limit, and each component's window mean within this many standard errors of zero.
+    release_samples: int = Field(default=20, ge=1)
+    consistent_window_probability: float = Field(default=0.05, gt=0.0, lt=1.0)
+    consistent_mean_sigmas: float = Field(default=2.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> HealthMonitorConfig:
+        if self.exclude_cusum < self.suspect_cusum:
+            raise ValueError("exclude_cusum must not be below suspect_cusum")
+        if self.exclude_window_probability > self.suspect_window_probability:
+            raise ValueError("exclude_window_probability must not be above suspect_window_probability")
+        return self
+
+
 class TrackerConfig(BaseModel):
     """Single-target tracker settings, shared by the baseline and fusion modes."""
 
@@ -111,6 +150,9 @@ class TrackerConfig(BaseModel):
     imm_straight_process_noise_m2_s3: float = Field(default=0.05, gt=0.0)
     # Process noise of the two coordinated-turn models, m^2/s^3.
     imm_turn_process_noise_m2_s3: float = Field(default=0.05, gt=0.0)
+
+    # Sensor health monitor (ADR 0012); None, the default, leaves the tracker exactly as it was without one.
+    health_monitor: HealthMonitorConfig | None = None
 
 
 def with_sensor_overrides(

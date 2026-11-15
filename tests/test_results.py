@@ -95,7 +95,7 @@ def test_record_provenance_and_hash():
     record = record_for()
     assert record["format_version"] == RESULTS_FORMAT
     assert record["package_version"] and record["python"] and record["argv"] == ["compare"]
-    assert record["seeds"] == SEEDS and record["tracker"] == TrackerConfig().model_dump(mode="json")
+    assert record["seeds"] == SEEDS and record["tracker"] == TrackerConfig().model_dump(mode="json", exclude_none=True)
     assert record["config_hash"] == config_hash(record)
     # The hash covers what determines the numbers, and nothing else.
     assert record_for()["config_hash"] == record["config_hash"]

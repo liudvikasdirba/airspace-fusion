@@ -111,9 +111,10 @@ ALLOWED_IMPORTS = {
     "config": {"schemas"},
     "simulator": {"config", "schemas"},
     "scenarios": {"config"},  # families draw ScenarioConfigs; they never see the simulator or the tracker
-    "estimation": {"config", "schemas"},
+    "health": {"config"},  # the monitor sees only innovations: never the simulator, evaluation or tracker internals
+    "estimation": {"config", "health", "schemas"},
     "estimation_stonesoup": {"config", "estimation", "schemas"},
-    "evaluation": {"config", "estimation", "scenarios", "schemas", "simulator"},
+    "evaluation": {"config", "estimation", "health", "scenarios", "schemas", "simulator"},
     "learning": {"config", "evaluation"},
     "agents": {"config", "evaluation", "learning", "scenarios"},
     "results": {"config", "evaluation", "scenarios"},

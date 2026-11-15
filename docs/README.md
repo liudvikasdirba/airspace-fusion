@@ -1,7 +1,7 @@
 ---
 title: Documentation index
 status: accepted
-updated: 2026-11-01
+updated: 2026-11-08
 ---
 
 # Documentation index
@@ -43,3 +43,4 @@ each version.
 | [ADR 0009: Verdict v2](adr/0009-verdict-v2.md) | accepted | Containment rules, "fusion over-confident", Holm correction, 200 seeds |
 | [ADR 0010: Learning evaluation](adr/0010-learning-evaluation.md) | accepted | Fresh held-out seeds per round, paired acceptance, sealed test set |
 | [ADR 0011: IMM tracker with fixed-rate coordinated turns](adr/0011-imm-tracker.md) | accepted | Constant velocity plus ±3°/s turn models; opt-in with `motion_model = "imm"` |
+| [ADR 0012: Sensor health monitor and sensor exclusion](adr/0012-sensor-health-monitor.md) | accepted | Innovation tests per sensor; trusted, suspect, excluded; the last position sensor is protected |

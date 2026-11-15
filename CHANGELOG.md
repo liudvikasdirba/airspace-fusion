@@ -8,6 +8,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Sensor health monitor, opt-in (`TrackerConfig.health_monitor`, `--health-monitor` on `run`, `compare` and `sweep`;
+  [ADR 0012](docs/adr/0012-sensor-health-monitor.md)). Each sensor's normalised innovations go through a windowed
+  chi-square test and a CUSUM, and the sensor is trusted, suspect (down-weighted) or excluded until its innovations
+  are consistent again. The last position sensor is protected, so a track always keeps the updates that keep it
+  alive (ADR 0004). Published results and the golden file do not change.
+- Metrics for the monitor (detection delay, false alarms, time excluded), the `health` command, and the `roc` command
+  for detection delay against false-alarm rate on the `bias_magnitude` family.
+- On 400 held-out seeds a 1.5° bias is detected in a median 11 s with both motion models and false alarms stay within
+  1 % of unbiased runs. In `biased_bearing` fusion goes from about twice the baseline's error to +0.9 % (constant
+  velocity) and +1.4 % (IMM). In `reference` the monitor keeps 92.6 % of the fusion gain with constant velocity and
+  90.6 % with the IMM, which meets the 90 % exit criterion only narrowly (95 % interval 87.5–93.0 %).
+
 ## [0.6.0] - 2026-11-08
 
 M4 finished: an opt-in IMM tracker that models the turn, and a learning loop that chooses the motion model per
