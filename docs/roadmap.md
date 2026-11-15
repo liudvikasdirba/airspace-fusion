@@ -21,7 +21,7 @@ Finished deliverables and exit criteria are ticked below, with a note where the 
 | M2 Varied worlds | **Done** 2 November, four weeks ahead of the 30 November – 20 December window: scenario files, the scenario generator, five families, the `sweep` command, results files with `reproduce`, the crossing-angle README section and ADR 0008. The crossing-angle exit criterion was replaced by what the sweep showed (see M2). Released as **0.4.0**, dated 2 November; merged, tagged and published 4 November. |
 | M3 Honest scoring | **Done** 4 November, two months ahead of the 4 – 17 January window: GOSPA metric, verdict v2 (ADR 0009) and learning evaluation (ADR 0010). All exit criteria met. Released as **0.5.0** on 4 November. A code review after the release found four correctness problems, fixed the same day in pull request 18 (see [M3](#m3--honest-scoring-050-4--17-jan-2027)); the fixes shipped in 0.6.0, because results files change format. |
 | M4 Manoeuvres | **Done** 8 November, over two months ahead of the 18 – 31 January window: the IMM tracker (opt-in, ADR 0011), its consistency tests, the `manoeuvre_intensity` results and the learning loop choosing the motion model. All exit criteria met. The factory default stays constant velocity (decided 5 November). Released as **0.6.0** on 8 November, together with the review fixes to 0.5.0. |
-| M5 Sensor health monitor | **Built** 8 November, opt-in, not yet released: the monitor, its three states, the metrics and ROC curves, ADR 0012. All four exit criteria are met with both motion models over 400 seeds. Keeping 90 % of the fusion gain in `reference` is met only narrowly with the IMM (90.6 %, 95 % interval 87.5–93.0 %); see [M5](#m5--sensor-health-monitor-070-1--21-feb-2027). |
+| M5 Sensor health monitor | **Done** 8 November, opt-in, released as **0.7.0** on 15 November, over two months ahead of the 1 – 21 February window: the monitor, its three states, the metrics and ROC curves, ADR 0012. All four exit criteria are met with both motion models over 400 seeds. Keeping 90 % of the fusion gain in `reference` is met only narrowly with the IMM (90.6 %, 95 % interval 87.5–93.0 %); see [M5](#m5--sensor-health-monitor-070-1--21-feb-2027). |
 | M6 – M8 | Not started. |
 
 ## Where the project stands
@@ -351,7 +351,7 @@ Exit criteria:
 - [x] In `biased_bearing`, fusion with the monitor is no more than 5 % worse than the baseline (today 97 % worse).
 - [x] In `reference`, at least 90 % of today's fusion gain is kept. *Narrowly with the IMM; see below.*
 
-Status (8 November 2026): built and opt-in, not yet released. The criteria predate the IMM, so both motion models were
+Status: **done on 8 November 2026**, opt-in, and released as 0.7.0 on 15 November. The criteria predate the IMM, so both motion models were
 measured, on 400 seeds per scenario (20000–20199 and 40000–40199), none of which chose a setting:
 
 | Criterion | Constant velocity | IMM |

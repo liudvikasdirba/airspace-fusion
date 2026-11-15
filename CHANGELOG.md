@@ -8,6 +8,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-15
+
+M5 finished: an opt-in sensor health monitor that notices, without ground truth, that a sensor is hurting fusion
+and stops trusting it. In `biased_bearing` fusion with the monitor is within 1.5 % of the baseline instead of about
+twice its error. The factory defaults are unchanged, so published results and the golden file do not change.
+
 ### Added
 
 - Sensor health monitor, opt-in (`TrackerConfig.health_monitor`, `--health-monitor` on `run`, `compare` and `sweep`;
