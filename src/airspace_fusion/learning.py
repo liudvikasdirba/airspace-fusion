@@ -188,12 +188,13 @@ def _active_settings(tracker: TrackerConfig) -> tuple[str, ...]:
 
 
 def same_settings(a: TrackerConfig, b: TrackerConfig) -> bool:
-    """Whether two trackers behave the same: same motion model and the same settings that model uses.
+    """Whether two trackers behave the same: same motion model, same health monitor (or none), and the same
+    settings that model uses.
 
     Settings of the other model are ignored, so an IMM candidate is not proposed again just because the
     constant-velocity process noise it carries along differs.
     """
-    if a.motion_model != b.motion_model:
+    if a.motion_model != b.motion_model or a.health_monitor != b.health_monitor:
         return False
     return all(math.isclose(getattr(a, k), getattr(b, k), rel_tol=1e-6) for k in _active_settings(a))
 

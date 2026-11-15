@@ -127,7 +127,7 @@ def _run(args: argparse.Namespace) -> None:
     for sensor in sensor_health_metrics(run).values():
         print(f"health {sensor.sensor_id}: biased={sensor.biased} detection_delay_s={sensor.detection_delay_s:.0f} "
               f"false_alarms={sensor.false_alarms} time_excluded_s={sensor.time_excluded_s:.0f} "
-              f"held_alarms={sensor.held_alarms}")
+              f"held_alarms={sensor.held_alarms} time_on_probation_s={sensor.time_on_probation_s:.0f}")
 
 
 MOTION_MODEL_HELP = (
@@ -335,14 +335,15 @@ def _health(args: argparse.Namespace) -> None:
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
     tracker = _monitored_tracker(args)
     print(f"seeds {seeds[0]}..{seeds[-1]} (n={len(seeds)}), motion model {tracker.motion_model}\n")
-    print(f"{'scenario':<20}{'false-alarm runs':>18}{'detected':>12}{'median delay':>14}{'time excluded':>15}")
+    print(f"{'scenario':<20}{'false-alarm runs':>18}{'detected':>12}{'median delay':>14}{'time excluded':>15}"
+          f"{'on probation':>14}")
     with seed_executor(args.workers, len(seeds)) as executor:
         for source in sources:
             s = health_summary(source, tracker, seeds, executor)
             detected = f"{s.detected_runs}/{s.biased_runs}" if s.biased_runs else "-"
             delay = f"{s.median_delay_s:.0f} s" if s.detected_runs else "-"
             print(f"{s.scenario:<20}{f'{s.runs_with_false_alarm}/{s.runs}':>18}{detected:>12}{delay:>14}"
-                  f"{f'{s.mean_time_excluded_s:.0f} s':>15}")
+                  f"{f'{s.mean_time_excluded_s:.0f} s':>15}{f'{s.mean_time_on_probation_s:.0f} s':>14}")
 
 
 ROC_CSV_COLUMNS = ("threshold_scale", "false_alarm_rate", "bias_deg", "detection_rate", "median_delay_s", "seeds")

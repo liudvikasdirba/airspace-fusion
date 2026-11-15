@@ -12,7 +12,7 @@ from scipy import stats
 
 from airspace_fusion.cli import main
 from airspace_fusion.config import SCENARIOS, HealthMonitorConfig, TrackerConfig, default_primary
-from airspace_fusion.estimation import Disposition, Innovation, down_weighted, run_tracker
+from airspace_fusion.estimation import Disposition, Innovation, SingleTargetTracker, TrackState, run_tracker
 from airspace_fusion.estimation_stonesoup import StoneSoupTracker
 from airspace_fusion.evaluation import (
     Mode,
@@ -134,6 +134,7 @@ def test_the_last_position_sensor_is_protected_but_a_second_one_is_not():
         t = T0 + timedelta(seconds=k)
         pair.observe(t, "p1", bad, True)
         pair.observe(t, "p2", (0.1, -0.1), True)
+        pair.position_used("p2", t)
     assert pair.state("p1") is SensorHealth.EXCLUDED
     assert pair.state("p2") is SensorHealth.TRUSTED
     for k in range(40, 80):  # p2 is now the last usable position sensor: it cannot follow p1 out
@@ -168,6 +169,8 @@ def test_a_position_sensor_gone_silent_does_not_count_as_an_alternative():
     for k in range(5):  # p1 reports for a while, then falls silent
         monitor.observe(at_second(k), "p1", good, True)
         monitor.observe(at_second(k), "p2", good, True)
+        monitor.position_used("p1", at_second(k))
+        monitor.position_used("p2", at_second(k))
     states = [monitor.observe(at_second(k), "p2", bad, True) for k in range(5, 60)]
     assert states[-1] is SensorHealth.TRUSTED
     assert monitor.report().held_alarms["p2"] > 0
@@ -179,6 +182,7 @@ def test_an_excluded_position_sensor_is_reinstated_when_the_other_falls_silent()
     for k in range(40):
         monitor.observe(at_second(k), "p1", bad, True)
         monitor.observe(at_second(k), "p2", good, True)
+        monitor.position_used("p2", at_second(k))
     assert monitor.state("p1") is SensorHealth.EXCLUDED
     states = [monitor.observe(at_second(k), "p1", bad, True) for k in range(40, 46)]
     assert states[:3] == [SensorHealth.EXCLUDED] * 3  # p2 might only have missed a scan or two
@@ -200,6 +204,63 @@ def test_a_sensor_with_positions_and_bearings_gets_a_monitor_for_each():
         monitor.observe(at_second(k), "both", (0.1, -0.1), True)
     assert monitor.report().samples == {"both": 60}
     assert monitor.report().final_states == {"both": SensorHealth.TRUSTED}
+
+
+def test_the_report_gives_each_kind_its_own_final_state():
+    """The tracker acts per kind; the summary state is the worst of them (review of 0.7.0)."""
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(40):
+        monitor.observe(at_second(k), "both", (0.1, -0.1), True)
+        monitor.position_used("both", at_second(k))
+        monitor.observe(at_second(k), "both", (3.0,), False)
+        monitor.observe(at_second(k), "p", (0.1, -0.1), True)
+        monitor.position_used("p", at_second(k))
+    report = monitor.report()
+    assert report.final_states_by_kind[("both", "other")] is SensorHealth.EXCLUDED
+    assert report.final_states_by_kind[("both", "position")] is SensorHealth.TRUSTED
+    assert report.final_states["both"] is SensorHealth.EXCLUDED
+
+
+def test_an_alternative_that_never_updates_the_track_does_not_end_protection():
+    """Review of 0.7.0: p2 is heard every scan but always gated out, so p1 is still all the track has."""
+    bad, good = (3.0, 3.0), (0.1, -0.1)
+    monitor = HealthMonitor(NO_PROBATION, SILENCE_S)
+    for k in range(60):
+        t = at_second(k)
+        monitor.not_for_initiation(t, ["p1", "p2"])  # both report positions
+        monitor.observe(t, "p2", (2.9, 2.9), True)  # never used
+        assert monitor.observe(t, "p1", bad if k >= 10 else good, True) is SensorHealth.TRUSTED
+        monitor.position_used("p1", t)
+    assert monitor.report().held_alarms["p1"] > 0
+
+
+def test_probation_periods_are_reported():
+    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3), SILENCE_S)
+    states = [monitor.observe(at_second(k), "b", (0.1,), False) for k in range(10)]
+    # Probation ends on the sample that reaches probation_samples, and that sample is already used.
+    assert states[:2] == [SensorHealth.EXCLUDED] * 2 and states[2] is SensorHealth.TRUSTED
+    monitor.start_new_track()
+    for k in range(20, 22):  # this track ends while b is still on probation
+        monitor.observe(at_second(k), "b", (0.1,), False)
+    assert monitor.report().probation == {"b": ((at_second(0), at_second(2)), (at_second(20), at_second(21)))}
+
+
+def test_running_window_sums_match_a_full_recount():
+    rng = np.random.default_rng(5)
+    monitor = SensorMonitor("s", NO_PROBATION, 2)
+    for _ in range(200):
+        monitor.observe(tuple(rng.normal(0.0, 1.0, size=2)), protected=False)
+        window = list(monitor._window)
+        assert monitor.window_sum == pytest.approx(sum(v * v for s in window for v in s), abs=1e-9)
+        assert monitor._component_sums == pytest.approx([sum(s[i] for s in window) for i in range(2)], abs=1e-9)
+
+
+def test_position_sensors_have_no_probation():
+    monitor = HealthMonitor(HealthMonitorConfig(probation_samples=3), SILENCE_S)
+    monitor.observe(T0, "p", (0.1, -0.1), True)
+    assert not monitor.monitors["p", True].on_probation
+    monitor.start_new_track()
+    assert not monitor.monitors["p", True].on_probation
 
 
 def test_what_piled_up_under_protection_cannot_exclude_the_sensor_when_it_ends():
@@ -233,6 +294,7 @@ def test_an_excluded_position_sensor_cannot_start_a_track_while_another_can():
     for k in range(40):
         monitor.observe(at_second(k), "p1", bad, True)
         monitor.observe(at_second(k), "p2", good, True)
+        monitor.position_used("p2", at_second(k))
     assert monitor.not_for_initiation(at_second(40), ["p1", "p2"]) == {"p1"}
     assert monitor.not_for_initiation(at_second(60), ["p1"]) == set()  # p2 is gone: p1 is all there is
 
@@ -256,13 +318,25 @@ def test_normalised_bearing_innovation():
     assert innovation.normalised() == pytest.approx((1.0,))
 
 
-def test_down_weighting_scales_the_variance_of_both_measurement_types():
+def test_normalised_innovation_survives_a_nearly_singular_covariance():
+    """Review of 0.7.0: rounding could take d - l21^2 just below zero and raise a math domain error."""
+    inverse = np.array([[1.0, 1.0 - 1e-17], [1.0 - 1e-17, 1.0]])
+    innovation = Innovation(np.array([1.0, 1.0]), np.eye(2, 4), np.eye(2), np.zeros((4, 2)), inverse)
+    assert all(math.isfinite(v) for v in innovation.normalised())
+
+
+def test_noise_scale_multiplies_the_variance_of_both_measurement_types():
     measurements, _ = parse_records(simulate(SCENARIOS["reference"], 0).records)
-    by_id = {"pos": next(m for m in measurements if len(m.measurement_value) == 2),
-             "brg": next(m for m in measurements if len(m.measurement_value) == 1)}
-    assert down_weighted(by_id["pos"], 4.0).covariance() == pytest.approx(by_id["pos"].covariance() * 4.0)
-    assert down_weighted(by_id["brg"], 4.0).angular_std() == pytest.approx(by_id["brg"].angular_std() * 2.0)
-    assert down_weighted(by_id["pos"], 4.0).measurement_value == by_id["pos"].measurement_value
+    pos = next(m for m in measurements if len(m.measurement_value) == 2)
+    brg = next(m for m in measurements if len(m.measurement_value) == 1)
+    tracker = SingleTargetTracker(TrackerConfig())
+    x, y = pos.measurement_value
+    state = TrackState(np.array([x, 10.0, y, 0.0]), np.eye(4) * 100.0, pos.timestamp_utc)
+    for m in (pos, brg):
+        plain, scaled = tracker._innovation(state, m), tracker._innovation(state, m, 4.0)
+        assert scaled.noise == pytest.approx(plain.noise * 4.0)
+        assert scaled.noise_scale == 4.0 and plain.noise_scale == 1.0
+        np.testing.assert_allclose(scaled.vector, plain.vector)
 
 
 # -- in the tracker ------------------------------------------------------------------------------------------------
@@ -331,11 +405,11 @@ def test_unset_monitor_does_not_enter_results_records():
 # -- metrics -------------------------------------------------------------------------------------------------------
 
 
-def with_report(scenario_name: str, transitions):
+def with_report(scenario_name: str, transitions, probation=None):
     scenario = SCENARIOS[scenario_name]
     run = run_single(scenario, MONITORED, 0)
     fusion = run.modes[Mode.FUSION]
-    report = HealthReport(tuple(transitions), {}, {}, {scenario.primary.sensor_id: 7})
+    report = HealthReport(tuple(transitions), {}, {}, {scenario.primary.sensor_id: 7}, probation=probation or {})
     modes = dict(run.modes)
     modes[Mode.FUSION] = replace(fusion, result=replace(fusion.result, health=report))
     return replace(run, modes=modes), scenario
@@ -368,6 +442,15 @@ def test_health_metrics_of_an_unbiased_sensor():
     assert metrics[scenario.primary.sensor_id].held_alarms == 7
 
 
+def test_health_metrics_count_time_on_probation():
+    """Review of 0.7.0: probation ignores a sensor just as exclusion does, and is now reported."""
+    sensor = SCENARIOS["reference"].secondary.sensor_id
+    run, _ = with_report("reference", [], probation={sensor: ((at(1), at(5)), (at(50), at(70)))})
+    metrics = sensor_health_metrics(run)[sensor]
+    assert metrics.time_on_probation_s == 24.0
+    assert metrics.time_excluded_s == 0.0 and metrics.false_alarms == 0
+
+
 def test_health_metrics_of_a_biased_sensor_excluded_until_the_end():
     sensor = SCENARIOS["biased_bearing"].secondary.sensor_id
     run, scenario = with_report("biased_bearing", [
@@ -394,6 +477,7 @@ def test_health_summary_counts_runs():
     assert (summary.runs, summary.biased_runs, summary.detected_runs) == (3, 3, 3)
     assert 0.0 < summary.median_delay_s <= 30.0
     assert summary.mean_time_excluded_s > 100.0
+    assert summary.mean_time_on_probation_s > 0.0  # each track starts with the bearing sensor on probation
     assert summary.false_alarm_rate == 0.0
 
 

@@ -46,13 +46,7 @@ import numpy as np
 
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.health import HealthMonitor, HealthReport, SensorHealth
-from airspace_fusion.schemas import (
-    AngularUncertainty,
-    CovarianceUncertainty,
-    Measurement,
-    MeasurementType,
-    wrap_angle,
-)
+from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
 
 POSITION_INDICES = (0, 2)
 POSITION_SLICE = slice(0, None, 2)  # the same indices; slicing is much cheaper than np.ix_
@@ -100,6 +94,7 @@ class Innovation:
     noise: np.ndarray  # R
     cross_covar: np.ndarray  # P H^T
     covar_inverse: np.ndarray  # S^-1, with S = H P H^T + R
+    noise_scale: float = 1.0  # R was the measurement's own variance times this (a suspect sensor, ADR 0012)
 
     @property
     def nis(self) -> float:
@@ -113,7 +108,8 @@ class Innovation:
         (a, b), (_, d) = self.covar_inverse.tolist()  # S^-1 = L L^T, and L^T nu has identity covariance
         l11 = math.sqrt(a)
         l21 = b / l11
-        return (l11 * nu + l21 * rest[0], math.sqrt(d - l21 * l21) * rest[0])
+        # d - l21^2 = det(S^-1) / a > 0 exactly; rounding can take it just below zero for a very elongated S.
+        return (l11 * nu + l21 * rest[0], math.sqrt(max(d - l21 * l21, 0.0)) * rest[0])
 
 
 def small_inverse(s: np.ndarray) -> np.ndarray:
@@ -270,31 +266,33 @@ class SingleTargetTracker:
         f, noise = self._transition((t - state.timestamp).total_seconds())
         return TrackState(f @ state.mean, f @ state.covar @ f.T + noise, t)
 
-    def _innovation(self, prior: TrackState, m: Measurement) -> Innovation:
+    def _innovation(self, prior: TrackState, m: Measurement, noise_scale: float = 1.0) -> Innovation:
+        """``m`` against ``prior``; ``noise_scale`` multiplies the measurement's variance (a suspect sensor)."""
         x = prior.mean
         if m.measurement_type is MeasurementType.POSITION_2D:
             # H selects x and y, so P H^T and H P H^T are slices of P: the same numbers, without matrix products.
-            noise = m.covariance()
+            noise = m.covariance() if noise_scale == 1.0 else m.covariance() * noise_scale
             vector = np.array(m.measurement_value) - x[POSITION_SLICE]
             cross_covar = prior.covar[:, POSITION_SLICE]
             covar = cross_covar[POSITION_SLICE] + noise
-            return Innovation(vector, POSITION_MATRIX, noise, cross_covar, small_inverse(covar))
+            return Innovation(vector, POSITION_MATRIX, noise, cross_covar, small_inverse(covar), noise_scale)
         elif m.measurement_type is MeasurementType.BEARING_ONLY:
             dx, dy = x[0] - m.sensor_position[0], x[2] - m.sensor_position[1]
             r2 = dx * dx + dy * dy
             if r2 == 0.0:
                 raise FloatingPointError("bearing Jacobian undefined at the sensor position")
             jacobian = np.array([[-dy / r2, 0.0, dx / r2, 0.0]])  # exact derivative of atan2
-            noise = np.array([[m.angular_std() ** 2]])
+            noise = np.array([[m.angular_std() ** 2 * noise_scale]])
             vector = np.array([wrap_angle(m.measurement_value[0] - math.atan2(dy, dx))])
         else:  # guarded by the caller; never reinterpret another type
             raise ValueError(f"unsupported measurement type {m.measurement_type}")
         cross_covar = prior.covar @ jacobian.T
-        return Innovation(vector, jacobian, noise, cross_covar, small_inverse(jacobian @ cross_covar + noise))
+        covar_inverse = small_inverse(jacobian @ cross_covar + noise)
+        return Innovation(vector, jacobian, noise, cross_covar, covar_inverse, noise_scale)
 
-    def _nis(self, prior: TrackState, m: Measurement) -> tuple[float, object]:
+    def _nis(self, prior: TrackState, m: Measurement, noise_scale: float = 1.0) -> tuple[float, object]:
         """NIS of ``m`` against ``prior``, plus whatever ``_update`` needs to apply it."""
-        innovation = self._innovation(prior, m)
+        innovation = self._innovation(prior, m, noise_scale)
         nis = innovation.nis
         if not np.isfinite(nis):
             raise FloatingPointError(f"non-finite NIS for measurement {m.measurement_id}")
@@ -431,6 +429,7 @@ class SingleTargetTracker:
                     track, a, b = started_track
                     if monitor is not None:
                         monitor.start_new_track()
+                        monitor.position_used(b.sensor_id, t)
                     dispositions[a.measurement_id] = Disposition.INITIATION
                     dispositions[b.measurement_id] = Disposition.INITIATION
                     accepted.append(b)
@@ -506,11 +505,12 @@ class SingleTargetTracker:
             dispositions[m.measurement_id] = Disposition.NOT_SELECTED
         if health is SensorHealth.SUSPECT:
             assert self.config.health_monitor is not None
-            weighted = down_weighted(chosen, self.config.health_monitor.suspect_noise_scale)
-            posterior = self._update(prior, weighted, self._nis(prior, weighted)[1])
-        else:
-            posterior = self._update(prior, chosen, payload)
+            # Record the NIS of the update actually applied, with the down-weighted noise.
+            chosen_nis, payload = self._nis(prior, chosen, self.config.health_monitor.suspect_noise_scale)
+        posterior = self._update(prior, chosen, payload)
         self._check_state(posterior)
+        if monitor is not None and chosen.measurement_type is MeasurementType.POSITION_2D:
+            monitor.position_used(chosen.sensor_id, t)
         dispositions[chosen.measurement_id] = Disposition.ACCEPTED
         if update_nis is not None:
             update_nis[chosen.measurement_id] = chosen_nis
@@ -528,22 +528,6 @@ class SingleTargetTracker:
             scale = math.sqrt(gate / nis)
             sample = tuple(v * scale for v in sample)
         return monitor.observe(t, m.sensor_id, sample, m.measurement_type is MeasurementType.POSITION_2D)
-
-
-def down_weighted(m: Measurement, variance_scale: float) -> Measurement:
-    """``m`` with its measurement variance multiplied by ``variance_scale``."""
-    uncertainty = m.measurement_uncertainty
-    if isinstance(uncertainty, AngularUncertainty):
-        scaled: AngularUncertainty | CovarianceUncertainty = uncertainty.model_copy(
-            update={"std_rad": uncertainty.std_rad * math.sqrt(variance_scale)}
-        )
-    elif isinstance(uncertainty, CovarianceUncertainty):
-        scaled = uncertainty.model_copy(
-            update={"matrix": tuple(tuple(v * variance_scale for v in row) for row in uncertainty.matrix)}
-        )
-    else:
-        raise ValueError(f"measurement {m.measurement_id} has no usable uncertainty")
-    return m.model_copy(update={"measurement_uncertainty": scaled})
 
 
 @dataclass(frozen=True)
@@ -653,8 +637,9 @@ class IMMTracker(SingleTargetTracker):
         """Update every model with ``m`` and re-weight the models by its likelihood (in log space)."""
         imm = self._as_imm(prior)
         models, log_weights = [], []
+        noise_scale = innovation.noise_scale if isinstance(innovation, Innovation) else 1.0
         for model, probability in zip(imm.models, imm.probabilities):
-            model_innovation = self._innovation(model, m)
+            model_innovation = self._innovation(model, m, noise_scale)
             models.append(super()._update(model, m, model_innovation))
             dim = model_innovation.vector.size
             log_likelihood = -0.5 * (model_innovation.nis + dim * math.log(2 * math.pi)

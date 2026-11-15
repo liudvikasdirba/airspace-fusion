@@ -472,8 +472,9 @@ Fusion can now notice, without ground truth, that a sensor is hurting it. The op
 ([ADR 0012](docs/adr/0012-sensor-health-monitor.md)) tests each sensor's normalised innovations with a windowed
 chi-square test and a CUSUM. A sensor is **trusted**, **suspect** (down-weighted) or **excluded** (ignored until its
 innovations are consistent again). A position sensor with no usable alternative is always trusted, because only position
-updates keep a track alive. An alternative counts only if it is not excluded and has reported within the last 4 s, half
-the coast limit. Bearing sensors are tested for the first few scans of each track before they are used.
+updates keep a track alive. An alternative counts only if it is not excluded and has updated the track within the last
+4 s, half the coast limit; being heard is not enough. Bearing sensors are tested for the first few scans of each track
+before they are used, and the `health` command reports that time on probation next to the time excluded.
 
 ```bash
 .venv/Scripts/python -m airspace_fusion.cli compare --scenario biased_bearing --health-monitor

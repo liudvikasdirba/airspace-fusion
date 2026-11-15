@@ -100,6 +100,7 @@ class HealthMonitorConfig(BaseModel):
     # No test may fire before this many samples of a sensor: the first innovations of a new track say little.
     min_samples: int = Field(default=5, ge=1)
     # A non-position sensor's first samples are only tested, not used, so a bad sensor never touches the track.
+    # Probation ends on the sample that reaches this count (if the window mean is not shifted), and that sample is used.
     probation_samples: int = Field(default=4, ge=0)
     # CUSUM: allowance per sample (half the smallest shift of interest, in innovation sigmas) and the two alarm limits.
     cusum_drift: float = Field(default=0.75, gt=0.0)

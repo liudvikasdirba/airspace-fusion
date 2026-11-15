@@ -132,7 +132,10 @@ def build_record(
         "python": platform.python_version(),
         "argv": list(argv),
         # An unset health monitor is left out, so that its arrival did not change the hash of any existing setting.
-        "tracker": tracker.model_dump(mode="json", exclude_none=True),
+        # Only that field: any other None is a real setting and must reach the hash and ``reproduce``.
+        "tracker": tracker.model_dump(
+            mode="json", exclude={"health_monitor"} if tracker.health_monitor is None else None
+        ),
         "seeds": list(seeds),
         "entries": [
             {"source": source_to_dict(e.source), "point": e.point, "summary": summary_to_dict(e.summary)}

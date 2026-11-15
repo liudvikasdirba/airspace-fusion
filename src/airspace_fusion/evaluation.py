@@ -483,8 +483,10 @@ class SensorHealthMetrics:
     biased: bool  # the scenario gives this sensor a bias; the monitor is never told
     detection_delay_s: float  # biased sensors: run start to first leaving "trusted"; NaN if never or if unbiased
     false_alarms: int  # unbiased sensors: how many times it left "trusted"
-    time_excluded_s: float  # time in the "excluded" state; probation does not count
+    time_excluded_s: float  # time in the "excluded" state; probation is counted separately
     held_alarms: int  # samples at which a test fired on a protected sensor, which the monitor may not act on
+    # Time on probation: the sensor's measurements were ignored as when excluded, though no test had fired.
+    time_on_probation_s: float = 0.0
 
 
 def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
@@ -516,6 +518,9 @@ def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
             false_alarms=0 if biased else len(alarms),
             time_excluded_s=excluded,
             held_alarms=report.held_alarms.get(sensor.sensor_id, 0),
+            time_on_probation_s=sum(
+                (end - first).total_seconds() for first, end in report.probation.get(sensor.sensor_id, ())
+            ),
         )
     return metrics
 
@@ -537,6 +542,7 @@ class HealthSummary:
     runs_with_false_alarm: int
     mean_false_alarms: float  # per run
     mean_time_excluded_s: float  # per run, all sensors
+    mean_time_on_probation_s: float = 0.0  # per run, all sensors: measurements ignored without an alarm
 
     @property
     def false_alarm_rate(self) -> float:
@@ -562,7 +568,7 @@ def health_summary(
         per_seed = list(executor.map(seed_health, repeat(scenario), repeat(tracker), seeds, chunksize=chunksize))
     delays: list[float] = []
     biased_runs = false_alarm_runs = total_false_alarms = 0
-    excluded = 0.0
+    excluded = probation = 0.0
     for sensors in per_seed:
         values = list(sensors.values())
         biased_sensors = [m for m in values if m.biased]
@@ -575,6 +581,7 @@ def health_summary(
         false_alarm_runs += false_alarms > 0
         total_false_alarms += false_alarms
         excluded += sum(m.time_excluded_s for m in values)
+        probation += sum(m.time_on_probation_s for m in values)
     return HealthSummary(
         scenario=scenario.name,
         runs=len(seeds),
@@ -584,6 +591,7 @@ def health_summary(
         runs_with_false_alarm=false_alarm_runs,
         mean_false_alarms=total_false_alarms / len(seeds) if seeds else math.nan,
         mean_time_excluded_s=excluded / len(seeds) if seeds else math.nan,
+        mean_time_on_probation_s=probation / len(seeds) if seeds else math.nan,
     )
 
 
