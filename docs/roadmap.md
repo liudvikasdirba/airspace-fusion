@@ -96,9 +96,12 @@ Estimates assume one maintainer working part-time; items marked *stretch* move t
 | M3 | 0.5.0 | 4 – 17 Jan 2027 | Honest scoring |
 | M4 | 0.6.0 | 18 – 31 Jan 2027 | Manoeuvres (IMM) |
 | M5 | 0.7.0 | 1 – 21 Feb 2027 | Sensor health monitor |
-| M6 | 0.8.0 | 22 Feb – 7 Mar 2027 | Bias estimation |
-| M7 | 0.9.0 | 8 – 28 Mar 2027 | Learning without labels |
+| M6 | 0.9.0 | 22 Feb – 7 Mar 2027 | Bias estimation |
+| M7 | 0.10.0 | 8 – 28 Mar 2027 | Learning without labels |
 | M8 | 1.0.0 | 29 Mar – 30 Apr 2027 | Benchmark and 1.0 (release candidate by 11 Apr) |
+
+0.8.0 (21 November 2026) was a maintenance release outside this plan: the dashboard controls for the IMM and
+the health monitor, and the fixes from the code review of 0.7.0. M6 and M7 moved up one minor version.
 
 ```
 Nov 2026        Dec 2026        Jan 2027        Feb 2027        Mar 2027        Apr 2027
@@ -382,7 +385,7 @@ tail probability below about 1e-16 no longer crashes, and the window sum is comp
 block with the fixes gave the same gain in `reference`, so the higher figures above come from adding seeds, not from
 the fixes.
 
-## M6 — Bias estimation (0.8.0, 22 Feb – 7 Mar 2027)
+## M6 — Bias estimation (0.9.0, 22 Feb – 7 Mar 2027)
 
 **Goal:** go beyond excluding a biased sensor: estimate the bias and keep using the sensor.
 
@@ -398,7 +401,7 @@ the bias estimate within ±0.3° of the true bias by the end of the run, on at l
 
 *Stretch:* covariance intersection may move to M8 if bias estimation takes the full two weeks.
 
-## M7 — Learning without labels (0.9.0, 8 – 28 Mar 2027)
+## M7 — Learning without labels (0.10.0, 8 – 28 Mar 2027)
 
 **Goal:** the learning loop chooses settings from what the tracker observes, not from the scenario's name,
 and it is tested on worlds it has never seen.

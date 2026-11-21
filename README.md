@@ -551,7 +551,7 @@ back to the baseline's error even when the bearing was helping.
 
 ## Development and testing
 
-Fast suite (about 20 s). It includes:
+Fast suite (about 1.5–2 min). It includes:
 - property-based schema fuzzing (`hypothesis`)
 - checks of both trackers (NumPy and Stone Soup) against textbook Kalman/EKF formulas, and of the two against
   each other
