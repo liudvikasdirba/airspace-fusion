@@ -13,6 +13,7 @@ from collections.abc import Iterator, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from enum import Enum
 from itertools import repeat
 
@@ -481,8 +482,10 @@ class SensorHealthMetrics:
 
     sensor_id: str
     biased: bool  # the scenario gives this sensor a bias; the monitor is never told
-    detection_delay_s: float  # biased sensors: run start to first leaving "trusted"; NaN if never or if unbiased
-    false_alarms: int  # unbiased sensors: how many times it left "trusted"
+    # Biased sensors: from the bias onset (``bias_start_s``) to the first time it left "trusted" after that; NaN if
+    # never, or if unbiased. A sensor not trusted at the onset (after a false alarm) counts as not detected.
+    detection_delay_s: float
+    false_alarms: int  # times it left "trusted" while unbiased: always for an unbiased sensor, before the onset else
     time_excluded_s: float  # time in the "excluded" state; probation is counted separately
     held_alarms: int  # samples at which a test fired on a protected sensor, which the monitor may not act on
     # Time on probation: the sensor's measurements were ignored as when excluded, though no test had fired.
@@ -501,6 +504,9 @@ def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
         transitions = report.for_sensor(sensor.sensor_id)
         alarms = [t for t in transitions if t.previous is SensorHealth.TRUSTED]
         biased = sensor.bias != 0.0
+        onset = start + timedelta(seconds=sensor.bias_start_s)
+        false = [a for a in alarms if not biased or a.timestamp < onset]
+        detections = [a for a in alarms if biased and a.timestamp >= onset]
         excluded = 0.0
         since = None
         for transition in transitions:
@@ -514,8 +520,8 @@ def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
         metrics[sensor.sensor_id] = SensorHealthMetrics(
             sensor_id=sensor.sensor_id,
             biased=biased,
-            detection_delay_s=(alarms[0].timestamp - start).total_seconds() if biased and alarms else math.nan,
-            false_alarms=0 if biased else len(alarms),
+            detection_delay_s=(detections[0].timestamp - onset).total_seconds() if detections else math.nan,
+            false_alarms=len(false),
             time_excluded_s=excluded,
             held_alarms=report.held_alarms.get(sensor.sensor_id, 0),
             time_on_probation_s=sum(

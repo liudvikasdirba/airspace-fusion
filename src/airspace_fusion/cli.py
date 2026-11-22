@@ -89,7 +89,7 @@ def _positive_int(text: str) -> int:
 
 SCENARIO_HELP = (
     "a scenario or family name (list them with 'airspace-fusion scenarios'); 'all' is the four built-in scenarios, "
-    "'families' the five built-in families"
+    "'families' the six built-in families"
 )
 
 

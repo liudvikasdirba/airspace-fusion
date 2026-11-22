@@ -8,6 +8,21 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A sixth scenario family, `late_bias`: a 1.5° bearing bias that starts between 30 and 150 s, after the track is
+  established. It tests the health monitor's blind spot, since probation only covers the start of a track. The
+  monitor catches a later bias sooner than one present from the start (median 9.4 s from the onset with constant
+  velocity, 8.9 s with the IMM, seeds 0–199, all detected, no false alarms), but fusion stays 5–7 % worse than the
+  baseline, against about 1 % when the bias is there from the start.
+- `SensorConfig.bias_start_s` (when a sensor's bias begins) and the family range `bias_start_s`, which `sweep` can fix.
+  Left out of saved configurations while 0, so existing results files and the golden file are unchanged.
+
+### Changed
+
+- Health metrics measure detection delay from the bias onset, and count alarms before the onset as false alarms.
+  For a bias present from the start, nothing changes.
+
 ## [0.8.0] - 2026-11-21
 
 A maintenance release outside the milestone plan. The dashboard gets controls for the IMM and the sensor health

@@ -95,7 +95,8 @@ class ScenarioFamily(BaseModel):
       ``range_ratio`` is unused).
 
     ``bearing_bias_deg`` and ``false_observations_per_scan`` (both sensors) replace the base values when set.
-    Clutter stays uniform over the base scenario's surveillance area.
+    ``bias_start_s`` sets when the bearing bias starts, in seconds after the scenario starts. Clutter stays
+    uniform over the base scenario's surveillance area.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -114,6 +115,7 @@ class ScenarioFamily(BaseModel):
     range_ratio: Range = _range(1.0, 1.0)
     bearing_bias_deg: Range | None = None
     false_observations_per_scan: Range | None = None
+    bias_start_s: Range | None = None  # when the bearing bias starts; drawn last, so the other draws keep their values
 
     @field_validator("base", mode="before")
     @classmethod
@@ -139,6 +141,8 @@ class ScenarioFamily(BaseModel):
         if self.false_observations_per_scan is not None:
             checks.append((self.false_observations_per_scan.lo >= 0.0,
                            "false_observations_per_scan must not be negative"))
+        if self.bias_start_s is not None:
+            checks.append((self.bias_start_s.lo >= 0.0, "bias_start_s must not be negative"))
         problems = [message for ok, message in checks if not ok]
         if problems:
             raise ValueError("; ".join(problems))
@@ -153,8 +157,9 @@ class ScenarioFamily(BaseModel):
     def for_seed(self, seed: int) -> ScenarioConfig:
         """The world this family draws for ``seed``: deterministic, and independent of the simulator's streams."""
         rng = np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(FAMILY_STREAM,)))
-        # One draw per parameter, always in this order (see the module docstring).
-        u = iter(rng.random(11).tolist())
+        # One draw per parameter, always in this order (see the module docstring). bias_start_s came later, so it
+        # is drawn last: every earlier draw keeps its value, and families from before it draw the same worlds.
+        u = iter(rng.random(12).tolist())
         start_range = self.start_range_m.at(next(u))
         azimuth = math.radians(self.start_azimuth_deg.at(next(u)))
         heading = azimuth + math.pi / 2 + math.radians(self.heading_offset_deg.at(next(u)))
@@ -162,7 +167,7 @@ class ScenarioFamily(BaseModel):
         turn_start = self.turn_start_s.at(next(u))
         turn_duration = self.turn_duration_s.at(next(u))
         turn_rate = math.radians(self.turn_rate_deg_s.at(next(u)))
-        u_crossing, u_ratio, u_bias, u_clutter = next(u), next(u), next(u), next(u)
+        u_crossing, u_ratio, u_bias, u_clutter, u_onset = next(u), next(u), next(u), next(u), next(u)
 
         px, py = self.base.primary.position_m
         sx, sy = px + start_range * math.cos(azimuth), py + start_range * math.sin(azimuth)
@@ -180,6 +185,9 @@ class ScenarioFamily(BaseModel):
             bias = math.radians(self.bearing_bias_deg.at(u_bias))
             secondary["bias"] = bias
             details.append(f"bearing bias {math.degrees(bias):.2f} deg")
+        if self.bias_start_s is not None:
+            secondary["bias_start_s"] = self.bias_start_s.at(u_onset)
+            details.append(f"bias from {secondary['bias_start_s']:.0f} s")
         clutter: dict[str, Any] = {}
         if self.false_observations_per_scan is not None:
             clutter["false_observations_per_scan"] = self.false_observations_per_scan.at(u_clutter)
@@ -214,6 +222,7 @@ SWEEPABLE_PARAMETERS = (
     "range_ratio",
     "bearing_bias_deg",
     "false_observations_per_scan",
+    "bias_start_s",
 )
 
 
@@ -271,6 +280,14 @@ FAMILIES: dict[str, ScenarioFamily] = {
             base=_REFERENCE,
             crossing_angle_deg=_range(60.0, 90.0),
             bearing_bias_deg=_range(0.0, 3.0),
+        ),
+        ScenarioFamily(
+            name="late_bias",
+            description="A 1.5 deg bearing bias that starts between 30 and 150 s, after the track is established.",
+            base=_REFERENCE,
+            crossing_angle_deg=_range(60.0, 90.0),
+            bearing_bias_deg=_range(1.5, 1.5),
+            bias_start_s=_range(30.0, 150.0),
         ),
     )
 }

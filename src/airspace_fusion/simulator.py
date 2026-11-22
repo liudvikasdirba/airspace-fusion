@@ -94,13 +94,17 @@ def _record(
     }
 
 
-def _true_value(sensor: SensorConfig, target_xy: np.ndarray, rng: np.random.Generator) -> tuple[float, ...]:
+def _true_value(
+    sensor: SensorConfig, target_xy: np.ndarray, rng: np.random.Generator, elapsed_s: float = 0.0
+) -> tuple[float, ...]:
+    """A detection of the target; the sensor's bias applies once ``elapsed_s`` reaches its ``bias_start_s``."""
     tx, ty = float(target_xy[0]), float(target_xy[1])
+    bias = sensor.bias if elapsed_s >= sensor.bias_start_s else 0.0  # draws the same random numbers either way
     if sensor.measurement_type is MeasurementType.POSITION_2D:
         nx, ny = rng.normal(0.0, sensor.noise_std, size=2).tolist()
-        return (tx + (nx + sensor.bias), ty + (ny + sensor.bias))
+        return (tx + (nx + bias), ty + (ny + bias))
     dx, dy = tx - sensor.position_m[0], ty - sensor.position_m[1]
-    bearing = math.atan2(dy, dx) + sensor.bias + rng.normal(0.0, sensor.noise_std)
+    bearing = math.atan2(dy, dx) + bias + rng.normal(0.0, sensor.noise_std)
     return (wrap_angle(bearing),)
 
 
@@ -149,7 +153,7 @@ def simulate(scenario: ScenarioConfig, seed: int) -> SimulationOutput:
             rng = sensor_rngs[sensor.sensor_id]
             scan: list[tuple[tuple[float, ...], bool]] = []
             if rng.random() < sensor.detection_probability:
-                scan.append((_true_value(sensor, positions[k], rng), False))
+                scan.append((_true_value(sensor, positions[k], rng, k * scenario.time_step_s), False))
             for _ in range(rng.poisson(sensor.false_observations_per_scan)):
                 scan.append((_false_value(sensor, scenario, rng), True))
             # Shuffle so the true observation's position in the scan carries no information.
