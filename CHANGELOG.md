@@ -8,6 +8,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-21
+
+A maintenance release outside the milestone plan. The dashboard gets controls for the IMM and the sensor health
+monitor, and the monitor gets the fixes from the code review of 0.7.0, including a safer protection rule and a
+time-on-probation metric. Results without the monitor are unchanged, and so are the published M5 numbers.
+
 ### Added
 
 - Dashboard controls for the motion model (constant velocity or IMM) and the sensor health monitor. With the IMM, a
