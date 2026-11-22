@@ -584,7 +584,8 @@ Slow suite (about 7 min, most of it the sensor health monitor's 400-seed exit cr
 .venv/Scripts/python -m pytest -m slow
 ```
 
-Lint and type checks, as CI runs them (the versions are pinned in `.github/workflows/tests.yml`):
+Lint and type checks, as CI runs them (the versions are pinned in `.github/workflows/tests.yml`). mypy runs in
+strict mode, set in `pyproject.toml`:
 
 ```bash
 .venv/Scripts/python -m pip install ruff==0.17.3 mypy==2.4.1

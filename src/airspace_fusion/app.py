@@ -25,7 +25,7 @@ from airspace_fusion.evaluation import (
 )
 from airspace_fusion.health import SensorHealth
 from airspace_fusion.scenarios import ScenarioFamily, builtin_sources, with_overrides
-from airspace_fusion.schemas import MeasurementType
+from airspace_fusion.schemas import FloatArray, MeasurementType
 
 # Categorical slots 1-2 of the validated reference palette; truth and observations stay neutral.
 MODE_COLORS = {Mode.BASELINE: "#2a78d6", Mode.FUSION: "#eb6834"}
@@ -72,7 +72,7 @@ LIMITATIONS = """
 """
 
 
-def ellipse_xy(mean: np.ndarray, cov: np.ndarray, scale2: float = CHI2_2DOF_95) -> tuple[np.ndarray, np.ndarray]:
+def ellipse_xy(mean: FloatArray, cov: FloatArray, scale2: float = CHI2_2DOF_95) -> tuple[FloatArray, FloatArray]:
     values, vectors = np.linalg.eigh(cov)
     theta = np.linspace(0.0, 2.0 * math.pi, 48)
     circle = np.stack([np.cos(theta), np.sin(theta)])

@@ -20,6 +20,9 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- mypy runs in strict mode (`strict = true` in `pyproject.toml`), the roadmap's typing target. Arrays are annotated
+  with one alias, `schemas.FloatArray` (`numpy.typing.NDArray[numpy.float64]`). The only new exemption lets the Stone
+  Soup cross-check subclass an untyped Stone Soup class. No behaviour changes.
 - Health metrics measure detection delay from the bias onset, and count alarms before the onset as false alarms.
   For a bias present from the start, nothing changes.
 

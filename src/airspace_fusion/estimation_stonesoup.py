@@ -10,6 +10,7 @@ the same dispositions and estimates within 1e-9; the NumPy tracker is about 20 t
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 from stonesoup.models.measurement.linear import LinearGaussian
@@ -25,7 +26,7 @@ from stonesoup.updater.kalman import ExtendedKalmanUpdater
 
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.estimation import POSITION_INDICES, SingleTargetTracker, TrackState
-from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
+from airspace_fusion.schemas import FloatArray, Measurement, MeasurementType, wrap_angle
 
 
 class AnalyticBearingModel(Cartesian2DToBearing):
@@ -36,7 +37,7 @@ class AnalyticBearingModel(Cartesian2DToBearing):
     constant, so it does not affect the Jacobian.
     """
 
-    def jacobian(self, state, **kwargs) -> np.ndarray:
+    def jacobian(self, state: Any, **kwargs: Any) -> FloatArray:
         x = np.asarray(state.state_vector, dtype=float).ravel()
         offset = np.asarray(self.translation_offset, dtype=float).ravel()
         ix, iy = self.mapping
