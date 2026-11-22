@@ -510,9 +510,10 @@ def sensor_health_metrics(run: SingleRun) -> dict[str, SensorHealthMetrics]:
         excluded = 0.0
         since = None
         for transition in transitions:
-            if transition.state is SensorHealth.EXCLUDED and since is None:
-                since = transition.timestamp
-            elif transition.state is not SensorHealth.EXCLUDED and since is not None:
+            if transition.state is SensorHealth.EXCLUDED:
+                if since is None:  # entering exclusion; a repeated "excluded" keeps the first start
+                    since = transition.timestamp
+            elif since is not None:  # leaving exclusion
                 excluded += (transition.timestamp - since).total_seconds()
                 since = None
         if since is not None:

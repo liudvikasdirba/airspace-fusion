@@ -22,14 +22,18 @@ import math
 from datetime import datetime, timedelta
 from enum import Enum
 from functools import lru_cache
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 PROBABILITY_SUM_TOLERANCE = 1e-6
 # Allowed asymmetry relative to the largest diagonal element (covers rounding, rejects real skew).
 SYMMETRY_RELATIVE_TOLERANCE = 1e-9
+
+# Every array in the package holds floats: states, covariances, positions, measurement values.
+FloatArray: TypeAlias = npt.NDArray[np.float64]
 
 
 class MeasurementType(str, Enum):
@@ -92,7 +96,7 @@ def _check_covariance(matrix: tuple[tuple[float, ...], ...]) -> None:
 
 
 @lru_cache(maxsize=1024)
-def _matrix_array(matrix: tuple[tuple[float, ...], ...]) -> np.ndarray:
+def _matrix_array(matrix: tuple[tuple[float, ...], ...]) -> FloatArray:
     array = np.array(matrix, dtype=float)
     array.flags.writeable = False  # shared between all measurements with this matrix
     return array
@@ -112,7 +116,7 @@ class CovarianceUncertainty(BaseModel):
         _check_covariance(matrix)
         return matrix
 
-    def as_array(self) -> np.ndarray:
+    def as_array(self) -> FloatArray:
         """The matrix as a read-only array, shared by every measurement with the same matrix."""
         return _matrix_array(self.matrix)
 
@@ -158,7 +162,7 @@ class Measurement(BaseModel):
         ),
     )
 
-    def covariance(self) -> np.ndarray:
+    def covariance(self) -> FloatArray:
         """The covariance of a measurement whose uncertainty is a covariance (e.g. POSITION_2D)."""
         if not isinstance(self.measurement_uncertainty, CovarianceUncertainty):
             raise ValueError(f"measurement {self.measurement_id} has no covariance uncertainty")

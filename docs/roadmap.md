@@ -64,7 +64,7 @@ Ordered by importance. Each one is addressed by the milestone named in the fourt
 | 7 | Fusion cannot detect or recover from a degraded sensor at runtime, although bearing NIS above 1.5 already reveals the bias. | The project can show that fusion fails but not prevent it. | M5, M6 | Partly: an opt-in monitor detects and stops trusting a biased bearing sensor (ADR 0012); correcting for the bias is M6 |
 | 8 | The rule book is keyed by scenario name, which a real system would not know. Nothing tests generalisation to unseen scenarios. | Learned settings are tied to labelled worlds. | M7 | Open |
 | 9 | Results are compared only with each other, never with a theoretical best. | "Better than baseline" is the strongest claim possible. | M8 | Open |
-| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 (0.2.0); scenario files and results with provenance (0.4.0); mypy strict open |
+| 10 | No static type checking; scenarios can only be defined in Python; results are not stored with provenance; Python 3.13 is experimental in CI. | Harder to contribute to and to reproduce. | M0, M2, M8 | Partly: mypy and Python 3.13 (0.2.0); scenario files and results with provenance (0.4.0); mypy strict (22 Nov, after 0.8.0) |
 
 ## Ambition
 
@@ -129,14 +129,16 @@ Deliverables:
 - [x] Replace the README's "not yet run" CI line with the real status.
 - [x] Add mypy (strict for `src/`) to the lint job; make Python 3.13 a required CI target.
   *mypy runs in default mode, not strict, in its own `types` job (it needs the dependencies installed, pinned by
-  `requirements.txt`). Strict mode stays the 0.4.0 target in [Targets](#targets). Python 3.13 runs on Ubuntu
-  and Windows.*
+  `requirements.txt`). Strict mode, the 0.4.0 target in [Targets](#targets), came on 22 November 2026: arrays are
+  typed through one `FloatArray` alias (`schemas.py`). Python 3.13 runs on Ubuntu and Windows.*
 - [x] Add this roadmap to the docs index.
 
 Exit criteria:
 - [x] All CI jobs green on `main`.
 - [x] Tags `v0.1.0` and `v0.2.0` exist.
 - [x] mypy passes with no ignores except for untyped third-party imports (SciPy, Stone Soup, Plotly, pandas).
+  *Still true in strict mode, with one more exemption: `estimation_stonesoup` may subclass an untyped Stone Soup
+  class (`disallow_subclassing_any = false` for that module only).*
 
 ## M1 — Fast and parallel (0.3.0, 9 – 29 Nov 2026)
 
@@ -458,7 +460,7 @@ validate the choice by Monte Carlo).
 | Bias detection delay / false alarms | none | none | none | ≤ 30 s / ≤ 1 % | ≤ 30 s / ≤ 1 % |
 | Learned policy on unseen families | not tested | not tested | not tested | not tested | better on ≥ 2/3, never > 2 % worse |
 | Comparison with a theoretical bound | none | none | none | none | PCRLB for every scenario |
-| Static typing | none | mypy (default mode) | mypy strict | mypy strict | mypy strict |
+| Static typing | none | mypy (default mode) | mypy strict (met 22 Nov) | mypy strict | mypy strict |
 
 ## Risks
 

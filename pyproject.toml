@@ -50,10 +50,16 @@ select = ["E", "F", "W", "I", "UP", "B"]
 ignore = ["B905"]
 
 [tool.mypy]
-# Default (non-strict) checking of the package, against the oldest supported Python. CI pins the mypy version.
+# Strict checking of the package, against the oldest supported Python. CI pins the mypy version.
 files = ["src/airspace_fusion"]
 python_version = "3.10"
+strict = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Stone Soup ships without type information, so its classes are Any; the cross-check has to subclass one.
+module = ["airspace_fusion.estimation_stonesoup"]
+disallow_subclassing_any = false
 
 [[tool.mypy.overrides]]
 # Third-party packages without type information. Nothing else may be ignored.

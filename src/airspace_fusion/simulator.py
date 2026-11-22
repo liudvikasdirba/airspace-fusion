@@ -18,14 +18,14 @@ from typing import Any
 import numpy as np
 
 from airspace_fusion.config import EPOCH_UTC, ScenarioConfig, SensorConfig
-from airspace_fusion.schemas import EXPECTED_UNITS, MeasurementType, wrap_angle
+from airspace_fusion.schemas import EXPECTED_UNITS, FloatArray, MeasurementType, wrap_angle
 
 
 @dataclass(frozen=True)
 class GroundTruth:
     timestamps: tuple[datetime, ...]
-    positions_m: np.ndarray  # shape (N, 2): x, y
-    velocities_mps: np.ndarray  # shape (N, 2): vx, vy
+    positions_m: FloatArray  # shape (N, 2): x, y
+    velocities_mps: FloatArray  # shape (N, 2): vx, vy
     false_observation_ids: frozenset[str]
     corrupted_record_ids: frozenset[str]
 
@@ -47,7 +47,7 @@ def scan_times(scenario: ScenarioConfig) -> tuple[datetime, ...]:
     return tuple(EPOCH_UTC + timedelta(seconds=k * scenario.time_step_s) for k in range(scenario.num_steps))
 
 
-def simulate_truth(scenario: ScenarioConfig, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+def simulate_truth(scenario: ScenarioConfig, rng: np.random.Generator) -> tuple[FloatArray, FloatArray]:
     """Integrate the target motion on the scan grid. Returns positions and velocities, each (N, 2)."""
     # Plain floats: the same IEEE operations in the same order as on 2-element arrays, so results are
     # bit-identical, without NumPy's per-call overhead on every step.
@@ -95,7 +95,7 @@ def _record(
 
 
 def _true_value(
-    sensor: SensorConfig, target_xy: np.ndarray, rng: np.random.Generator, elapsed_s: float = 0.0
+    sensor: SensorConfig, target_xy: FloatArray, rng: np.random.Generator, elapsed_s: float = 0.0
 ) -> tuple[float, ...]:
     """A detection of the target; the sensor's bias applies once ``elapsed_s`` reaches its ``bias_start_s``."""
     tx, ty = float(target_xy[0]), float(target_xy[1])

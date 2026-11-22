@@ -46,7 +46,7 @@ import numpy as np
 
 from airspace_fusion.config import TrackerConfig
 from airspace_fusion.health import HealthMonitor, HealthReport, SensorHealth
-from airspace_fusion.schemas import Measurement, MeasurementType, wrap_angle
+from airspace_fusion.schemas import FloatArray, Measurement, MeasurementType, wrap_angle
 
 POSITION_INDICES = (0, 2)
 POSITION_SLICE = slice(0, None, 2)  # the same indices; slicing is much cheaper than np.ix_
@@ -80,8 +80,8 @@ class TrackState:
     The arrays are never modified after construction; every filter step makes new ones.
     """
 
-    mean: np.ndarray
-    covar: np.ndarray
+    mean: FloatArray
+    covar: FloatArray
     timestamp: datetime
 
 
@@ -89,11 +89,11 @@ class TrackState:
 class Innovation:
     """One measurement against a predicted state: what the Kalman update needs, computed once."""
 
-    vector: np.ndarray  # measurement minus predicted measurement (bearings wrapped to [-pi, pi))
-    jacobian: np.ndarray  # H, measurement dimension x 4
-    noise: np.ndarray  # R
-    cross_covar: np.ndarray  # P H^T
-    covar_inverse: np.ndarray  # S^-1, with S = H P H^T + R
+    vector: FloatArray  # measurement minus predicted measurement (bearings wrapped to [-pi, pi))
+    jacobian: FloatArray  # H, measurement dimension x 4
+    noise: FloatArray  # R
+    cross_covar: FloatArray  # P H^T
+    covar_inverse: FloatArray  # S^-1, with S = H P H^T + R
     noise_scale: float = 1.0  # R was the measurement's own variance times this (a suspect sensor, ADR 0012)
 
     @property
@@ -112,7 +112,7 @@ class Innovation:
         return (l11 * nu + l21 * rest[0], math.sqrt(max(d - l21 * l21, 0.0)) * rest[0])
 
 
-def small_inverse(s: np.ndarray) -> np.ndarray:
+def small_inverse(s: FloatArray) -> FloatArray:
     """Inverse of a 1x1 or 2x2 matrix in closed form; ``np.linalg.inv`` costs more in overhead than in work."""
     if s.shape == (1, 1):
         return 1.0 / s
@@ -120,10 +120,11 @@ def small_inverse(s: np.ndarray) -> np.ndarray:
     det = a * d - b * c
     if not det > 0.0:  # an innovation covariance is positive definite; also catches NaN
         raise FloatingPointError("innovation covariance is not positive definite")
-    return np.array([[d, -b], [-c, a]]) / det
+    inverse: FloatArray = np.array([[d, -b], [-c, a]]) / det
+    return inverse
 
 
-def is_positive_definite(matrix: np.ndarray) -> bool:
+def is_positive_definite(matrix: FloatArray) -> bool:
     """True if a Cholesky factorisation of the lower triangle succeeds, as with ``numpy.linalg.cholesky``.
 
     The 4x4 state covariance is factorised in unrolled plain Python, about four times faster than
@@ -174,8 +175,8 @@ class Disposition:
 @dataclass(frozen=True)
 class Estimate:
     timestamp: datetime
-    state: np.ndarray | None  # [x, vx, y, vy], or None when no track exists
-    covariance: np.ndarray | None  # 4x4
+    state: FloatArray | None  # [x, vx, y, vy], or None when no track exists
+    covariance: FloatArray | None  # 4x4
     updated_by: tuple[str, ...]  # measurement ids accepted at this timestamp
     updated_sensors: frozenset[str] = frozenset()  # sensors that contributed those measurements
     # IMM only: each motion model's probability (constant velocity, left turn, right turn); None for "cv".
@@ -186,14 +187,14 @@ class Estimate:
         return self.state is not None
 
     @property
-    def position(self) -> np.ndarray:
+    def position(self) -> FloatArray:
         """Estimated ``[x, y]``. Raises ValueError when there is no track: check ``has_track`` first."""
         if self.state is None:
             raise ValueError(f"no track at {self.timestamp}")
         return self.state[POSITION_SLICE].copy()
 
     @property
-    def position_covariance(self) -> np.ndarray:
+    def position_covariance(self) -> FloatArray:
         """2x2 covariance of ``position``. Raises ValueError when there is no track."""
         if self.covariance is None:
             raise ValueError(f"no track at {self.timestamp}")
@@ -242,11 +243,11 @@ class SingleTargetTracker:
         self.max_coast = timedelta(seconds=config.max_coast_s)
         # Chi-square gate thresholds by measurement dimension (1 = bearing, 2 = position).
         self.gate_thresholds = {dof: chi2_quantile(config.gate_probability, dof) for dof in (1, 2)}
-        self._transitions: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+        self._transitions: dict[float, tuple[FloatArray, FloatArray]] = {}
 
     # -- filter steps -----------------------------------------------------------
 
-    def _transition(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
+    def _transition(self, dt: float) -> tuple[FloatArray, FloatArray]:
         """Transition matrix F and process noise Q over ``dt`` seconds; cached, since scans are regular."""
         cached = self._transitions.get(dt)
         if cached is None:
@@ -536,10 +537,10 @@ class IMMState(TrackState):
     initiation and the metrics use; ``models`` and ``probabilities`` are each motion model's state and weight."""
 
     models: tuple[TrackState, ...] = ()
-    probabilities: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    probabilities: FloatArray = field(default_factory=lambda: np.zeros(0))
 
 
-def _combine(states: Sequence[TrackState], weights: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _combine(states: Sequence[TrackState], weights: FloatArray) -> tuple[FloatArray, FloatArray]:
     """Moment-matched mean and covariance of a Gaussian mixture."""
     mean = sum((w * s.mean for w, s in zip(weights, states)), np.zeros(4))
     covar = np.zeros((4, 4))
@@ -549,7 +550,7 @@ def _combine(states: Sequence[TrackState], weights: np.ndarray) -> tuple[np.ndar
     return mean, (covar + covar.T) / 2
 
 
-def _log_det(covar_inverse: np.ndarray) -> float:
+def _log_det(covar_inverse: FloatArray) -> float:
     """log det S, from S^-1 (1x1 or 2x2)."""
     if covar_inverse.shape == (1, 1):
         return -math.log(covar_inverse[0, 0])
@@ -577,9 +578,9 @@ class IMMTracker(SingleTargetTracker):
         np.fill_diagonal(self.transition, stay)
         # A new track is assumed to fly straight; the turn models start with the switching probability.
         self.initial_probabilities = self.transition[0].copy()
-        self._model_transitions: dict[tuple[int, float], tuple[np.ndarray, np.ndarray]] = {}
+        self._model_transitions: dict[tuple[int, float], tuple[FloatArray, FloatArray]] = {}
 
-    def _model_transition(self, model: int, dt: float) -> tuple[np.ndarray, np.ndarray]:
+    def _model_transition(self, model: int, dt: float) -> tuple[FloatArray, FloatArray]:
         """F and Q of one model over ``dt`` seconds; cached, since scans are regular."""
         cached = self._model_transitions.get((model, dt))
         if cached is None:
@@ -695,8 +696,8 @@ class NisSeries:
     dof: int
     window: int
     timestamps: list[datetime]
-    nis_per_dof: np.ndarray
-    rolling_mean: np.ndarray  # mean of the last ``window`` values; NaN until ``window`` values exist
+    nis_per_dof: FloatArray
+    rolling_mean: FloatArray  # mean of the last ``window`` values; NaN until ``window`` values exist
     band: tuple[float, float]
 
 
