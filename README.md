@@ -40,7 +40,7 @@ same option, but Streamlit reads it only when started from the repository root.
 
 | Control | Effect |
 |---|---|
-| Scenario or family | One of the four built-in worlds, or one of the five families, which draw a different world for each seed (see [Scenarios](#scenarios)). The description is shown underneath; for a family, the drawn world is described above the charts. |
+| Scenario or family | One of the four built-in worlds, or one of the six families, which draw a different world for each seed (see [Scenarios](#scenarios)). The description is shown underneath; for a family, the drawn world is described above the charts. |
 | Random seed | Which random version of that world is generated. The same seed always gives the same result. |
 | Noise multiplier | Scales both sensors' measurement noise (0.25x to 3x). |
 | Missed-observation probability | Chance that each sensor misses the object on a scan (0 to 0.8). |
@@ -98,7 +98,7 @@ One seeded simulation, both modes:
 ```
 
 Multi-seed comparison over all scenarios, 200 seeds by default (about 20–30 s on a 4-core laptop; `--seeds N`
-for another number). Use `--scenario NAME` for one scenario or family, `--scenario families` for the five
+for another number). Use `--scenario NAME` for one scenario or family, `--scenario families` for the six
 families, and `--first-seed N` to start from a different seed:
 
 ```bash
@@ -267,6 +267,7 @@ from ranges (see [ADR 0008](docs/adr/0008-scenario-files-and-families.md)):
 | `manoeuvre_intensity` | turns up to ±6°/s for 20–80 s (crossing 60–90°) |
 | `clutter_density` | 0–5 false observations per scan on both sensors (crossing 60–90°) |
 | `bias_magnitude` | unmodelled bearing bias 0–3° (crossing 60–90°) |
+| `late_bias` | a 1.5° bearing bias that starts between 30 and 150 s (crossing 60–90°) |
 
 The same family and seed always give the same world, and both modes share it, so comparisons stay paired. A
 family's results pool many geometries, so their spread across seeds is wider than for a fixed scenario. Families
@@ -538,6 +539,20 @@ both CUSUM limits, so 1.00 is the default. Cells are the median delay in seconds
 Below about 1° the monitor mostly stays quiet: a 0.5° bias raises an alarm in about a quarter of the runs at the
 default thresholds. A biased position sensor is blamed on the bearing sensor, which is then excluded, so fusion falls
 back to the baseline's error even when the bearing was helping.
+
+**A bias that starts later.** The `late_bias` family turns a 1.5° bearing bias on between 30 and 150 s, after the
+track is established. On seeds 0–199 (the monitor was not tuned on this family), delays counted from the onset:
+
+| | Bias from the start | Bias from 30–150 s | Fusion vs baseline RMSE, monitor off → on |
+|---|---|---|---|
+| Constant velocity | 12 s, 200/200 detected | 9.4 s, 200/200 (slowest 10 %: up to 32 s) | +52 % → +7.4 % |
+| IMM | 12 s, 200/200 | 8.9 s, 200/200 (slowest 10 %: up to 25 s) | +64 % → +5.5 % |
+
+A later bias is caught sooner, not later: an established track is a sharper reference than a new one, and probation
+is not needed for it. No unbiased run raised an alarm. But fusion stays 5–7 % worse than the baseline, against +0.9 %
+and +1.4 % when the bias is there from the start (`biased_bearing`), and above M5's 5 % bar. The bias pulls the state
+off before it is caught, and the track takes a while to recover. Correcting the bias instead of only dropping the
+sensor is M6.
 
 ## Limitations
 

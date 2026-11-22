@@ -452,7 +452,7 @@ validate the choice by Monte Carlo).
 |---|---|---|---|---|---|
 | Seeds behind each verdict | 20 | 20 (200 take 26 s) | 1,000 possible | 200 by default | 200 by default |
 | Time for 1,000 seeds × 4 scenarios (development machine) | about 37 min | 117 s (99 s on 2 Nov) | under 110 s | under 110 s | under 110 s |
-| Scenario families | 0 (4 fixed scenarios) | 0 | 5 | 6+ | suite-2027.1 frozen |
+| Scenario families | 0 (4 fixed scenarios) | 0 | 5 | 6+ (6 since 22 Nov: `late_bias`) | suite-2027.1 frozen |
 | Baseline containment, `reference` | 0.92 | 0.92 | 0.92 | 0.95 ± 0.02 | 0.95 ± 0.02 |
 | Fusion vs baseline RMSE, `biased_bearing` | +97 % | +97 % | +97 % | ≤ +5 % | ≤ 0 % |
 | Bias detection delay / false alarms | none | none | none | ≤ 30 s / ≤ 1 % | ≤ 30 s / ≤ 1 % |

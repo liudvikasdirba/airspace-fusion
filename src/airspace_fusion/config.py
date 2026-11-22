@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from airspace_fusion.schemas import MeasurementType
 
@@ -27,7 +27,8 @@ class SensorConfig(BaseModel):
     ``noise_std`` is in metres for POSITION_2D and radians for BEARING_ONLY.
     ``bias`` is an *unmodelled* systematic error in the same units, added by the
     simulator only; the tracker is never told about it. For POSITION_2D it is added
-    to each axis, so the offset magnitude is ``bias * sqrt(2)``.
+    to each axis, so the offset magnitude is ``bias * sqrt(2)``. The bias applies from
+    ``bias_start_s`` seconds after the scenario starts (0: from the start).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -37,6 +38,7 @@ class SensorConfig(BaseModel):
     measurement_type: MeasurementType
     noise_std: float = Field(gt=0.0)
     bias: float = 0.0
+    bias_start_s: float = Field(default=0.0, ge=0.0)
     detection_probability: float = Field(default=0.9, ge=0.0, le=1.0)
     false_observations_per_scan: float = Field(default=0.2, ge=0.0)
     scan_interval_steps: int = Field(default=1, ge=1)
@@ -46,6 +48,15 @@ class SensorConfig(BaseModel):
         if self.measurement_type not in (MeasurementType.POSITION_2D, MeasurementType.BEARING_ONLY):
             raise ValueError("the simulator only generates POSITION_2D and BEARING_ONLY sensors")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_default_bias_start(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Leave ``bias_start_s`` out while it is 0, so every configuration from before it existed serialises,
+        and so hashes (results files, the golden file), exactly as before."""
+        data: dict[str, Any] = handler(self)
+        if self.bias_start_s == 0.0:
+            data.pop("bias_start_s", None)
+        return data
 
 
 class ScenarioConfig(BaseModel):

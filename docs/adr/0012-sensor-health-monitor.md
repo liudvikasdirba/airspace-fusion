@@ -86,8 +86,11 @@ Limits:
   falls back to the baseline's error. With 60 m per axis, fusion without the monitor has lower RMSE (70 m against
   91 m, constant velocity, 30 seeds): excluding the bearing removed a sensor that was helping.
 - Small biases go undetected. At 0.5° only about a quarter of runs raise an alarm at the default thresholds.
-- Probation is only at the start of a track. A sensor that goes bad later has its bias partly absorbed, which makes
-  detection slower than these figures, and no scenario tests it.
+- Probation is only at the start of a track. The `late_bias` family (added in 0.9.0) tests a bias that starts
+  30–150 s into a run: it is caught sooner than one present from the start (median 9.4 s from the onset with
+  constant velocity, 8.9 s with the IMM, seeds 0–199, every run detected, no false alarms), because an established
+  track is a sharper reference. Fusion still ends 5–7 % worse than the baseline, since the bias moves the state before
+  it is caught.
 - The built-in scenarios have one position sensor, so the rules for several are covered by unit tests only.
 - Turns faster than the IMM's turn rate have not been tested for false alarms.
 
